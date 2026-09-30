@@ -72,6 +72,7 @@ cmd/server
 
 - Qoder Global 和 Qoder CN 是同一个 `provider=qoder`，通过 `region` 区分，不创建新的 provider family。
 - Qoder 每个账号使用独立 HOME 和独立 child process；不得为每个请求启动完整 CLI agent。
+- Qoder 的签到、额度快照与登录态探测在 Go 进程内直连 openapi HTTP（存储凭证 AES 解密、401 自动刷新写回）；worker 只承担聊天推理与 `/admin/quota` 热路径兜底。
 - Qoder 的 CLI / worker 兼容性版本固定在 `worker/src/compat.mjs`，不兼容时应明确失败。
 - WorkBuddy、Trae CN Work、Devin 使用进程内 adapter，不复制 Qoder worker 生命周期。
 - provider 负责上游事实映射；executor 负责是否切号、冷却多久和是否 failover。

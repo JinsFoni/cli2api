@@ -15,16 +15,19 @@ import (
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
 
-func TestAdapterDoesNotRegisterProber(t *testing.T) {
-	adapter := NewClient().Adapter()
+func TestAdapterRegistersNativeControlPlane(t *testing.T) {
+	adapter := NewClient(nil).Adapter()
 	if adapter.ID != "qoder" {
 		t.Fatalf("id = %q", adapter.ID)
 	}
-	if adapter.Prober != nil {
-		t.Fatal("S09 Adapter must omit Prober so empty-URL Qoder stays off refreshInProcess")
+	if adapter.Prober == nil {
+		t.Fatal("Prober must register once probe/quota are native (pool-routed only)")
 	}
 	if adapter.Models == nil || adapter.Login == nil || adapter.Chat == nil {
 		t.Fatal("expected Models, Login, and Chat wrappers")
+	}
+	if adapter.Checkin == nil {
+		t.Fatal("native check-in must stay registered")
 	}
 }
 
@@ -57,7 +60,7 @@ func TestAdapterModelsMatchesWorkerClient(t *testing.T) {
 	}
 	wantIDs := CatalogIDs(entries, nil)
 
-	client := NewClient()
+	client := NewClient(nil)
 	client.SetHTTP(worker.Client())
 	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "proxy-key" })
 	models, err := client.Models(context.Background(), "acc-1")
@@ -105,7 +108,7 @@ func TestAdapterQuotaSnapshotPreservesAddOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := NewClient()
+	client := NewClient(nil)
 	client.SetHTTP(worker.Client())
 	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "k" })
 	got, err := client.QuotaSnapshot(context.Background(), "acc-1", true)
@@ -143,7 +146,7 @@ func TestAdapterStartLoginWaitsForAuthManager(t *testing.T) {
 	}))
 	defer worker.Close()
 
-	client := NewClient()
+	client := NewClient(nil)
 	client.SetHTTP(worker.Client())
 	client.SetLoginWait(time.Second, 10*time.Millisecond)
 	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "k" })
@@ -189,7 +192,7 @@ func TestAdapterChatRequestMatchesNewChatRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := NewClient()
+	client := NewClient(nil)
 	client.SetHTTP(worker.Client())
 	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "worker-key" })
 	outcome, err := client.ChatNonStream(context.Background(), "acc-1", req)

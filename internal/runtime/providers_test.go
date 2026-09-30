@@ -286,7 +286,7 @@ func TestManagerRefreshUsesQoderAdapterCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyAPIKey: "proxy-key"}, store, &fakeStarter{})
-	client := qoder.NewClient()
+	client := qoder.NewClient(nil)
 	client.Bind(manager.AccountURL, manager.ProxyAPIKey)
 	registry := providers.NewRegistry()
 	registry.Register(client.Adapter())
@@ -316,17 +316,22 @@ func TestQoderAdapterRegistrationDoesNotProbeEmptyURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	client := qoder.NewClient()
+	client := qoder.NewClient(nil)
 	client.Bind(manager.AccountURL, manager.ProxyAPIKey)
 	registry := providers.NewRegistry()
 	registry.Register(client.Adapter())
 	manager.SetProviders(registry)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "child_process"})
 	if err := manager.RefreshAll(ctx, false); err != nil {
-		t.Fatalf("empty-URL qoder with Adapter must stay a no-op, got %v", err)
+		t.Fatalf("empty-URL qoder with Adapter must not fail refresh, got %v", err)
 	}
 	item, _ := manager.Pool().ByID(account.ID)
-	if item.Ready != nil || item.LastError != "" || item.Models != nil {
-		t.Fatalf("pool should be untouched, got %+v", item)
+	// Pool-routed probe never flips a starting/URL-less item to Ready: chat
+	// could not be served, so the item must stay unroutable.
+	if item.Ready != nil && *item.Ready {
+		t.Fatalf("empty-URL qoder must not report ready, got %+v", item)
+	}
+	if item.Models != nil {
+		t.Fatalf("pool models must stay untouched, got %+v", item)
 	}
 }

@@ -116,7 +116,7 @@ func New(cfg config.Config) *App {
 	providerReg.Register(devin.NewClient(store).Adapter())
 	providerReg.Register(command.NewClient(store).Adapter())
 	providerReg.Register(codex.NewClient(store).Adapter())
-	qoderClient := qoder.NewClient()
+	qoderClient := qoder.NewClient(store)
 	qoderClient.Bind(manager.AccountURL, manager.ProxyAPIKey)
 	providerReg.Register(qoderClient.Adapter())
 	manager.SetProviders(providerReg)

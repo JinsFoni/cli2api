@@ -3,6 +3,7 @@ package qoder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/providers"
+	"github.com/caigee-cmd/cli2api/internal/proxy"
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
 
@@ -26,23 +28,38 @@ type Client struct {
 	locate      func(accountID string) (string, bool)
 	proxyAPIKey func() string
 
+	// nativeStore binds the in-process control plane (check-in, native quota,
+	// credential probing) to the account store. Nil keeps the pure worker
+	// behavior for callers that only need chat routing.
+	nativeStore NativeStore
+
+	// transports caches proxy transports for direct control-plane calls.
+	transports proxy.TransportCache
+
 	modelsHTTP *http.Client
 	healthHTTP *http.Client
 	quotaHTTP  *http.Client
 	adminHTTP  *http.Client
 	chatHTTP   *http.Client
+	nativeBase *http.Client
+
+	// endpointsOverride replaces the openapi hosts for native control-plane
+	// calls; set only by tests.
+	endpointsOverride map[string]nativeEndpoints
 
 	loginTimeout  time.Duration
 	loginInterval time.Duration
 }
 
-func NewClient() *Client {
+func NewClient(store NativeStore) *Client {
 	return &Client{
+		nativeStore:   store,
 		modelsHTTP:    &http.Client{Timeout: 15 * time.Second},
 		healthHTTP:    &http.Client{Timeout: 2 * time.Second},
 		quotaHTTP:     &http.Client{Timeout: 5 * time.Second},
 		adminHTTP:     &http.Client{Timeout: 120 * time.Second},
 		chatHTTP:      &http.Client{Timeout: 120 * time.Second},
+		nativeBase:    &http.Client{Timeout: 15 * time.Second},
 		loginTimeout:  90 * time.Second,
 		loginInterval: 200 * time.Millisecond,
 	}
@@ -82,14 +99,20 @@ func (c *Client) SetLoginWait(timeout, interval time.Duration) {
 }
 
 func (c *Client) Adapter() providers.Adapter {
-	// Probe/Quota stay off the registered bundle in S09: empty-URL Qoder
-	// items must not enter refreshInProcess just because an Adapter exists.
-	// Callers that need those methods use the Client directly.
+	// Check-in and quota are native now (direct Bearer HTTP + stored
+	// credential), so the Prober slot is safe to register: refreshInProcess
+	// only routes items that already sit in the pool, and Probe defers to the
+	// running worker's health for anything chat-routable. Probe for qoder
+	// never fabricates model availability, and fetchProviderModels skips
+	// qoder outright, so a credential-only ready item cannot join a model
+	// route with an empty URL: routeBaseMatches still requires a catalog or
+	// proven model hit for the concrete request.
 	return providers.Adapter{
 		ID:      "qoder",
 		Login:   c,
 		Chat:    c,
 		Models:  c,
+		Prober:  c,
 		Checkin: c,
 	}
 }
@@ -329,25 +352,43 @@ func CatalogIDsFromInfos(models []providers.ModelInfo) []string {
 }
 
 func (c *Client) Probe(ctx context.Context, accountID string) (providers.AccountHealth, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return providers.AccountHealth{}, err
-	}
 	c.mu.RLock()
-	httpClient := c.healthHTTP
+	healthHTTP := c.healthHTTP
+	locate := c.locate
 	c.mu.RUnlock()
-	health, status, err := WorkerClient{HTTP: httpClient}.Health(ctx, workerURL)
-	if err != nil {
-		return providers.AccountHealth{}, err
+	// A running worker is the authority on readiness: it owns the chat runtime
+	// that must actually serve. Note the asymmetry with the pre-native shape:
+	// a pool miss ("", false) now falls through to the credential verdict
+	// instead of failing, so stopped accounts still report login state.
+	if locate != nil {
+		if workerURL, found := locate(accountID); found {
+			workerURL = strings.TrimRight(strings.TrimSpace(workerURL), "/")
+			if workerURL != "" {
+				health, status, err := WorkerClient{HTTP: healthHTTP}.Health(ctx, workerURL)
+				if err != nil {
+					return providers.AccountHealth{LastError: err.Error()}, nil
+				}
+				ready := status < 300 && health.OK && health.Ready
+				return providers.AccountHealth{
+					Ready:     ready,
+					Hot:       health.Hot,
+					UID:       health.UID,
+					InFlight:  health.InFlight,
+					LastError: health.LastError,
+				}, nil
+			}
+			// Pool entry exists but has no URL yet (worker still starting):
+			// never report ready, chat could not be served.
+			return providers.AccountHealth{LastError: "qoder worker is starting"}, nil
+		}
 	}
-	ready := status < 300 && health.OK && health.Ready
-	return providers.AccountHealth{
-		Ready:     ready,
-		Hot:       health.Hot,
-		UID:       health.UID,
-		InFlight:  health.InFlight,
-		LastError: health.LastError,
-	}, nil
+	// No pool entry: stopped or never-started account. The stored credential
+	// decides the login-state display; this never marks a routable account.
+	_, cred, err := c.resolvedCredential(ctx, accountID)
+	if err != nil {
+		return providers.AccountHealth{LastError: err.Error()}, nil
+	}
+	return providers.AccountHealth{Ready: true, Hot: true, UID: cred.UID}, nil
 }
 
 func (c *Client) Quota(ctx context.Context, accountID string) (*providers.QuotaInfo, error) {
@@ -367,6 +408,18 @@ func (c *Client) Quota(ctx context.Context, accountID string) (*providers.QuotaI
 }
 
 func (c *Client) QuotaSnapshot(ctx context.Context, accountID string, force bool) (*accounts.QuotaSnapshot, error) {
+	snapshot, err := c.nativeQuotaSnapshot(ctx, accountID)
+	if err == nil {
+		return snapshot, nil
+	}
+	// Worker fallback is reachable only when the native path is structurally
+	// unavailable (no store binding, unreadable credential, unmapped region).
+	// A native attempt that itself failed (transport, upstream status, shape)
+	// surfaces: the worker would call the same upstream, so a second
+	// round-trip would only mask drift.
+	if !errors.Is(err, errNativeUnavailable) {
+		return nil, err
+	}
 	workerURL, err := c.lookup(accountID)
 	if err != nil {
 		return nil, err
@@ -378,6 +431,32 @@ func (c *Client) QuotaSnapshot(ctx context.Context, accountID string, force bool
 		httpClient = &http.Client{Timeout: 5 * time.Second}
 	}
 	return c.worker(httpClient).Quota(ctx, workerURL, force)
+}
+
+// errNativeUnavailable marks structural reasons the in-process quota path
+// cannot even be attempted; callers may fall back to the worker for these.
+var errNativeUnavailable = errors.New("qoder native quota unavailable")
+
+func (c *Client) nativeQuotaSnapshot(ctx context.Context, accountID string) (*accounts.QuotaSnapshot, error) {
+	if c.nativeStore == nil {
+		return nil, fmt.Errorf("%w: store not bound", errNativeUnavailable)
+	}
+	account, cred, err := c.resolvedCredential(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errNativeUnavailable, err)
+	}
+	if _, ok := c.endpoint(account.ProviderRegion); !ok {
+		return nil, fmt.Errorf("%w: region %q has no openapi endpoint", errNativeUnavailable, account.ProviderRegion)
+	}
+	httpClient, err := c.nativeHTTP(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errNativeUnavailable, err)
+	}
+	quota, err := c.fetchNativeQuota(ctx, httpClient, account, cred)
+	if err != nil {
+		return nil, err
+	}
+	return quota.snapshot(), nil
 }
 
 func (c *Client) StartLogin(ctx context.Context, accountID string) (providers.LoginSession, error) {
