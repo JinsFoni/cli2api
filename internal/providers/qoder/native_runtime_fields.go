@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // runtimePublicKeyPEM 是上游 CLI 用于生成 Cosy-Key 的固定公钥(纯公钥材料,
@@ -84,21 +85,21 @@ func generateRuntimeFields(input runtimeFieldsInput, entropy io.Reader) (runtime
 		DataPolicyAgreed bool     `json:"data_policy_agreed"`
 	}{input.UID, input.OrganizationID, input.OrganizationTags, input.DataPolicyAgreed})
 	if err != nil {
-		return runtimeFields{}, fmt.Errorf("marshal runtime userinfo: %w", err)
+		return runtimeFields{}, fmt.Errorf("qoder runtime fields: marshal runtime userinfo: %w", err)
 	}
 	var random [16]byte
 	if _, err := io.ReadFull(entropy, random[:]); err != nil {
-		return runtimeFields{}, fmt.Errorf("read runtime uuid entropy: %w", err)
+		return runtimeFields{}, fmt.Errorf("qoder runtime fields: read runtime uuid entropy: %w", err)
 	}
 	uuid := reverseMaskUUID(random)
 	key := runtimeASCIIKey(uuid)
 	ciphertext, err := aesCBCEncryptPKCS7(raw, key, key)
 	if err != nil {
-		return runtimeFields{}, err
+		return runtimeFields{}, fmt.Errorf("qoder runtime fields: aes encrypt userinfo: %w", err)
 	}
 	publicKey, err := parseRuntimePublicKey()
 	if err != nil {
-		return runtimeFields{}, err
+		return runtimeFields{}, fmt.Errorf("qoder runtime fields: load public key: %w", err)
 	}
 	// crypto/rsa 保证 PS 无 0 字节(内部对 0 字节重抽),满足上游
 	// nonZeroRandomBytes 语义。RSA 填充随机源:注入熵时以 16 个熵字节
@@ -110,7 +111,7 @@ func generateRuntimeFields(input runtimeFieldsInput, entropy io.Reader) (runtime
 	}
 	encryptedKey, err := rsa.EncryptPKCS1v15(rsaRandom, publicKey, key)
 	if err != nil {
-		return runtimeFields{}, err
+		return runtimeFields{}, fmt.Errorf("qoder runtime fields: rsa encrypt key: %w", err)
 	}
 	return runtimeFields{
 		EncryptUserInfo: base64Std(ciphertext),
@@ -151,8 +152,27 @@ func base64Std(src []byte) string {
 	return base64.StdEncoding.EncodeToString(src)
 }
 
-// parseRuntimePublicKey 解析内嵌的 SPKI PEM;启动期只调用一次的路径。
+// runtimePublicKeyOnce/缓存保证内嵌 PEM 只解析一次:generateRuntimeFields
+// 每次调用都会经过 parseRuntimePublicKey(热路径),而 PEM 是编译期常量,
+// 解析结果不变,因此用 sync.Once 求值一次并缓存公钥与错误。
+var (
+	runtimePublicKeyOnce sync.Once
+	runtimePublicKey     *rsa.PublicKey
+	runtimePublicKeyErr  error
+)
+
+// parseRuntimePublicKey 返回内嵌 SPKI PEM 解析出的 RSA 公钥;首次调用时
+// 解析,之后直接命中缓存。
 func parseRuntimePublicKey() (*rsa.PublicKey, error) {
+	runtimePublicKeyOnce.Do(func() {
+		runtimePublicKey, runtimePublicKeyErr = decodeRuntimePublicKey()
+	})
+	return runtimePublicKey, runtimePublicKeyErr
+}
+
+// decodeRuntimePublicKey 解析内嵌 PEM;仅由 parseRuntimePublicKey 经
+// sync.Once 调用一次。
+func decodeRuntimePublicKey() (*rsa.PublicKey, error) {
 	block, _ := pem.Decode([]byte(runtimePublicKeyPEM))
 	if block == nil {
 		return nil, errors.New("qoder runtime fields: invalid embedded public key PEM")
