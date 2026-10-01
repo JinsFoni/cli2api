@@ -434,3 +434,84 @@ func TestSummarizeAndDiagnoseToolHistory(t *testing.T) {
 		t.Fatalf("binary flags: %v", diagnostics[1])
 	}
 }
+
+// TestPlainChatBodyToolResultImageHoisting: image parts inside tool results
+// are stripped to text placeholders and re-hoisted into a trailing user
+// message (OpenAI image_url and data/mime image shapes).
+func TestPlainChatBodyToolResultImageHoisting(t *testing.T) {
+	tools := json.RawMessage(`[{"type":"function","function":{"name":"shot","parameters":{}}}]`)
+	req := translate.ChatRequest{
+		Model: "m",
+		Messages: []translate.ChatMessage{
+			{Role: "user", Content: "screenshot"},
+			{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"shot","arguments":"{}"}}]`)},
+			{Role: "tool", ToolCallID: "call_1", Content: []any{
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,QUJD"}},
+			}},
+			{Role: "user", Content: "describe it"},
+		},
+		Tools: tools,
+	}
+	body, err := buildPlainChatBody(req, ResolvedModel{Key: "k"}, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := plainDecode(t, body)
+	messages := plainMessages(t, decoded)
+	// user, assistant(tool_calls), tool(text placeholder), user(images), user(describe)
+	if len(messages) != 5 {
+		for i, m := range messages {
+			t.Logf("message %d: %v", i, m)
+		}
+		t.Fatalf("message count %d, want 5", len(messages))
+	}
+	toolMsg := messages[2].(map[string]any)
+	if toolMsg["content"] != "[Image: unknown]" {
+		t.Fatalf("tool content placeholder: %v", toolMsg["content"])
+	}
+	hoisted := messages[3].(map[string]any)
+	if hoisted["role"] != "user" {
+		t.Fatalf("hoisted role: %v", hoisted)
+	}
+	parts, ok := hoisted["content"].([]any)
+	if !ok || len(parts) != 1 {
+		t.Fatalf("hoisted content: %v", hoisted["content"])
+	}
+	image := parts[0].(map[string]any)
+	if image["type"] != "image_url" {
+		t.Fatalf("hoisted part: %v", image)
+	}
+	if url := image["image_url"].(map[string]any)["url"]; url != "data:image/png;base64,QUJD" {
+		t.Fatalf("hoisted url: %v", url)
+	}
+	// Anthropic-style image part with raw data + mime type becomes a data:URL
+	// (fresh request so message indices stay stable).
+	req2 := translate.ChatRequest{
+		Model: "m",
+		Messages: []translate.ChatMessage{
+			{Role: "user", Content: "screenshot"},
+			{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"shot","arguments":"{}"}}]`)},
+			{Role: "tool", ToolCallID: "call_1", Content: []any{
+				map[string]any{"type": "image", "data": "QUJD", "mimeType": "image/jpeg"},
+			}},
+		},
+		Tools: tools,
+	}
+	body, err = buildPlainChatBody(req2, ResolvedModel{Key: "k"}, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages = plainMessages(t, plainDecode(t, body))
+	// [user, assistant(tool_calls), tool placeholder, hoisted user]
+	if len(messages) != 4 {
+		t.Fatalf("req2 message count %d", len(messages))
+	}
+	if messages[2].(map[string]any)["content"] != "[Image: image/jpeg]" {
+		t.Fatalf("req2 placeholder: %v", messages[2].(map[string]any)["content"])
+	}
+	hoisted = messages[3].(map[string]any)
+	part := hoisted["content"].([]any)[0].(map[string]any)
+	if url := part["image_url"].(map[string]any)["url"]; url != "data:image/jpeg;base64,QUJD" {
+		t.Fatalf("data url: %v", url)
+	}
+}
