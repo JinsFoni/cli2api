@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caigee-cmd/cli2api/internal/endpoint"
 	"github.com/caigee-cmd/cli2api/internal/providers"
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
@@ -162,54 +163,39 @@ func TestAdapterStartLoginWaitsForAuthManager(t *testing.T) {
 	}
 }
 
+// The native chat path no longer round-trips through the worker; this only
+// pins the worker request shape still consumed by the executor payload path.
 func TestAdapterChatRequestMatchesNewChatRequest(t *testing.T) {
-	var gotPath, gotAuth, gotAccount, gotContentType string
-	var body []byte
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAuth = r.Header.Get("Authorization")
-		gotAccount = r.Header.Get("X-Qoder-Account")
-		gotContentType = r.Header.Get("Content-Type")
-		body, _ = io.ReadAll(r.Body)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model": "glm-5.2",
-			"choices": []map[string]any{{
-				"finish_reason": "stop",
-				"message":       map[string]any{"content": "hi", "reasoning_content": "think"},
-			}},
-			"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 1, "source": "provider", "credits": 0.5},
-		})
-	}))
-	defer worker.Close()
-
 	req := translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}}
 	wantPayload, err := json.Marshal(BuildChatPayload(req, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, err := NewChatRequest(context.Background(), worker.URL, "acc-1", "", "worker-key", wantPayload)
+	direct, err := NewChatRequest(context.Background(), "http://worker.internal", "acc-1", "req-1", "worker-key", wantPayload)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	client := NewClient(nil)
-	client.SetHTTP(worker.Client())
-	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "worker-key" })
-	outcome, err := client.ChatNonStream(context.Background(), "acc-1", req)
+	if direct.URL.Path != endpoint.ChatCompletionsPath {
+		t.Fatalf("path = %s want %s", direct.URL.Path, endpoint.ChatCompletionsPath)
+	}
+	if got := direct.Header.Get("Authorization"); got != "Bearer worker-key" {
+		t.Fatalf("auth = %q", got)
+	}
+	if got := direct.Header.Get("X-Qoder-Account"); got != "acc-1" {
+		t.Fatalf("account = %q", got)
+	}
+	if got := direct.Header.Get("X-Request-Id"); got != "req-1" {
+		t.Fatalf("request id = %q", got)
+	}
+	if got := direct.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q", got)
+	}
+	payload, err := io.ReadAll(direct.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != direct.URL.Path {
-		t.Fatalf("path = %s want %s", gotPath, direct.URL.Path)
-	}
-	if gotAuth != direct.Header.Get("Authorization") || gotAccount != direct.Header.Get("X-Qoder-Account") || gotContentType != "application/json" {
-		t.Fatalf("headers auth=%q account=%q type=%q", gotAuth, gotAccount, gotContentType)
-	}
-	if string(body) != string(wantPayload) {
-		t.Fatalf("body = %s want %s", body, wantPayload)
-	}
-	if outcome.Content != "hi" || outcome.Reasoning != "think" || outcome.PromptTokens != 3 || outcome.UsageSource != "provider" {
-		t.Fatalf("outcome = %+v", outcome)
+	if string(payload) != string(wantPayload) {
+		t.Fatalf("body = %s want %s", payload, wantPayload)
 	}
 }
 

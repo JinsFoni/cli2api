@@ -34,6 +34,11 @@ type inferIdentity struct {
 	OrganizationTags []string
 	DataPolicyAgreed bool
 	Region           string // "global" | "cn"
+	// PlainBody forces the plaintext variant: no body encoding, no Encode=1
+	// query parameter, and the cosy signature computed over the plaintext.
+	// The chat path always sends plaintext; Task 8 recordings decide the
+	// final per-region constant.
+	PlainBody bool
 }
 
 // preparedInfer 是可直接发起 POST 的请求形态。
@@ -86,7 +91,7 @@ func (id inferIdentity) prepareInferRequest(endpoint, rawJSON, modelKey, modelSo
 
 	body := string(encodeNativeBody([]byte(rawJSON)))
 	query := "?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
-	if id.Region == "cn" && !cnEncodeBody {
+	if (id.Region == "cn" && !cnEncodeBody) || id.PlainBody {
 		body = rawJSON
 		query = "?FetchKeys=llm_model_result&AgentId=agent_common"
 	}

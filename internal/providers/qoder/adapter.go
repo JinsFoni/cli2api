@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,6 +45,10 @@ type Client struct {
 	// endpointsOverride replaces the openapi hosts for native control-plane
 	// calls; set only by tests.
 	endpointsOverride map[string]nativeEndpoints
+
+	// identities caches built chat identities (runtime fields) per account;
+	// nil until the first native chat.
+	identities *identityCache
 
 	loginTimeout  time.Duration
 	loginInterval time.Duration
@@ -516,115 +519,6 @@ func (c *Client) PollLogin(ctx context.Context, accountID string) (bool, string,
 	return parsed.Login.Status == "ok", parsed.Login.Message, nil
 }
 
-func (c *Client) ChatNonStream(ctx context.Context, accountID string, req translate.ChatRequest) (providers.ChatOutcome, error) {
-	httpReq, resolved, err := c.newChatRequest(ctx, accountID, req, false)
-	if err != nil {
-		return providers.ChatOutcome{}, err
-	}
-	c.mu.RLock()
-	httpClient := c.chatHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return providers.ChatOutcome{}, TransportError{Err: err}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return providers.ChatOutcome{}, HTTPStatusError{Op: "chat", Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
-	}
-	outcome, err := decodeChatOutcome(req.Model, body)
-	if err != nil {
-		return providers.ChatOutcome{}, err
-	}
-	outcome.ReasoningLevel = resolved.ReasoningLevel
-	return outcome, nil
-}
-
-func (c *Client) ChatStream(ctx context.Context, accountID string, req translate.ChatRequest) (*http.Response, providers.ResolvedChat, error) {
-	httpReq, resolved, err := c.newChatRequest(ctx, accountID, req, true)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	c.mu.RLock()
-	httpClient := c.chatHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	if httpClient.Timeout > 0 {
-		cloned := *httpClient
-		cloned.Timeout = 0
-		httpClient = &cloned
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, TransportError{Err: err}
-	}
-	return resp, resolved, nil
-}
-
-func (c *Client) newChatRequest(ctx context.Context, accountID string, req translate.ChatRequest, stream bool) (*http.Request, providers.ResolvedChat, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	payload, err := json.Marshal(BuildChatPayload(req, stream))
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	httpReq, err := NewChatRequest(ctx, workerURL, accountID, "", c.key(), payload)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	return httpReq, providers.ResolvedChat{ReasoningLevel: resolvedReasoningLevel(req)}, nil
-}
-
-// resolvedReasoningLevel surfaces the reasoning level that qoder forwards to
-// the worker. Qoder does not clamp; the worker applies its own model policy,
-// so this is the normalized client value (or stored default) only.
-func resolvedReasoningLevel(req translate.ChatRequest) string {
-	if len(req.ReasoningEffort) > 0 {
-		var value any
-		if json.Unmarshal(req.ReasoningEffort, &value) == nil {
-			switch typed := value.(type) {
-			case string:
-				return providers.NormalizeReasoningLevel(typed)
-			case map[string]any:
-				for _, key := range []string{"effort", "level", "type"} {
-					if text, ok := typed[key].(string); ok {
-						if level := providers.NormalizeReasoningLevel(text); level != "" {
-							return level
-						}
-					}
-				}
-			}
-		}
-	}
-	if req.EnableThinking != nil {
-		if *req.EnableThinking {
-			return "medium"
-		}
-		return "none"
-	}
-	if req.EnableReasoning != nil {
-		if *req.EnableReasoning {
-			return "medium"
-		}
-		return "none"
-	}
-	if req.IsReasoning != nil {
-		if *req.IsReasoning {
-			return "medium"
-		}
-		return "none"
-	}
-	return ""
-}
-
 func BuildChatPayload(req translate.ChatRequest, stream bool) map[string]any {
 	payload := map[string]any{
 		"model":    req.Model,
@@ -682,58 +576,6 @@ func BuildChatPayload(req translate.ChatRequest, stream bool) map[string]any {
 		payload["tool_choice"] = json.RawMessage(req.ToolChoice)
 	}
 	return payload
-}
-
-func decodeChatOutcome(fallbackModel string, body []byte) (providers.ChatOutcome, error) {
-	var parsed struct {
-		Model string `json:"model"`
-		Usage struct {
-			PromptTokens     int      `json:"prompt_tokens"`
-			CompletionTokens int      `json:"completion_tokens"`
-			CacheReadTokens  *int     `json:"cache_read_tokens"`
-			CacheWriteTokens *int     `json:"cache_write_tokens"`
-			Source           string   `json:"source"`
-			Credits          *float64 `json:"credits"`
-		} `json:"usage"`
-		Choices []struct {
-			FinishReason string `json:"finish_reason"`
-			Message      struct {
-				Content          string          `json:"content"`
-				ReasoningContent string          `json:"reasoning_content"`
-				ToolCalls        json.RawMessage `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return providers.ChatOutcome{}, fmt.Errorf("decode worker response: %w", err)
-	}
-	outcome := providers.ChatOutcome{
-		Model:            parsed.Model,
-		PromptTokens:     parsed.Usage.PromptTokens,
-		CompletionTokens: parsed.Usage.CompletionTokens,
-		CacheReadTokens:  parsed.Usage.CacheReadTokens,
-		CacheWriteTokens: parsed.Usage.CacheWriteTokens,
-		UsageSource:      parsed.Usage.Source,
-		Credits:          parsed.Usage.Credits,
-		FinishReason:     "stop",
-	}
-	if outcome.Model == "" {
-		outcome.Model = fallbackModel
-	}
-	if outcome.UsageSource == "" {
-		outcome.UsageSource = "estimate"
-	}
-	if len(parsed.Choices) > 0 {
-		outcome.Content = parsed.Choices[0].Message.Content
-		outcome.Reasoning = parsed.Choices[0].Message.ReasoningContent
-		outcome.ToolCalls = parsed.Choices[0].Message.ToolCalls
-		if parsed.Choices[0].FinishReason != "" {
-			outcome.FinishReason = parsed.Choices[0].FinishReason
-		} else if len(outcome.ToolCalls) > 0 && string(outcome.ToolCalls) != "null" {
-			outcome.FinishReason = "tool_calls"
-		}
-	}
-	return outcome, nil
 }
 
 func stringField(entry map[string]any, keys ...string) string {
