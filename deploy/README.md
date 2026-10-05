@@ -131,7 +131,6 @@ console; environment variables cannot replace it.
 |----------|---------|---------|
 | `QODER_DATA_DIR` | `/data` | SQLite database and durable account credentials |
 | `QODER_MAX_RETRY_ACCOUNTS` | `4` | Maximum accounts attempted for one request (1-64) |
-| `QODER_SSE_DIAGNOSTIC_MODELS` | empty | Comma-separated Qoder model IDs for redacted SSE diagnostics in Runtime Logs; `*` enables all |
 | `QODER_PROXY_URL` | empty | Initial global outbound proxy: `http(s)://`, `direct`, or `none`; saved console settings take precedence |
 | `UPDATE_GITHUB_TOKEN` | empty | Optional GitHub token for release checks |
 | `UPDATE_AGENT_URL` | empty | Docker Desktop host updater URL, written by the installer |
@@ -139,13 +138,10 @@ console; environment variables cannot replace it.
 | `CLI2API_UPDATER_SOCKET_DIR` | platform-specific | Host directory mounted read-only for the Linux updater socket |
 
 These are process settings; Compose passes only variables declared in its
-`environment` section. For variables not listed there, add them through a local
+`environment` section. For variables not listed there — for example
+`QODER_PROXY_URL` — add them through a local
 `deploy/docker-compose.override.yml` and include that file with `-f` when running
 Compose directly. An entry in `deploy/.env` alone is not enough.
-
-For Qoder stream diagnostics, set `QODER_SSE_DIAGNOSTIC_MODELS` to a model ID
-from `/v1/models` and recreate the container. Diagnostics record event metadata,
-not prompts, responses, tool arguments, or credentials.
 
 </details>
 
