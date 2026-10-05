@@ -124,9 +124,6 @@ func (m *Manager) fetchProviderModels(ctx context.Context, item Item) {
 	if m.providers == nil {
 		return
 	}
-	if strings.EqualFold(strings.TrimSpace(item.Provider), "qoder") {
-		return
-	}
 	adapter, ok := m.providers.Get(item.Provider)
 	if !ok || adapter.Models == nil {
 		return

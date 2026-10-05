@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -228,23 +227,11 @@ func (m *Manager) ReloadProxyURL(ctx context.Context, value string) error {
 		starter.SetProxyURL(value)
 	}
 
-	accounts, err := m.store.List(ctx)
-	if err != nil {
-		return err
-	}
+	// With no child-process accounts left, nothing needs a restart here: the
+	// shared native transport picks up the new proxy on its next dial. The
+	// store list and restart loop are gone; the proxy-reload retry contract
+	// only concerns the pending flag below.
 	var joined error
-	for _, account := range accounts {
-		if !m.shouldRestartForGlobalProxy(account) {
-			continue
-		}
-		if err := m.stopAccount(account.ID); err != nil {
-			joined = errors.Join(joined, fmt.Errorf("stop account %s: %w", account.ID, err))
-			continue
-		}
-		if err := m.startAccountWithRecovery(ctx, account); err != nil {
-			joined = errors.Join(joined, fmt.Errorf("restart account %s: %w", account.ID, err))
-		}
-	}
 
 	// Clear the pending flag only when every worker switched successfully, so a
 	// later identical PATCH retries the ones that failed.
@@ -254,17 +241,6 @@ func (m *Manager) ReloadProxyURL(ctx context.Context, value string) error {
 		m.mu.Unlock()
 	}
 	return joined
-}
-
-// shouldRestartForGlobalProxy reports whether a global proxy change must
-// restart the account's worker: only enabled child-process (Qoder) accounts
-// with no per-account proxy inherit the global setting.
-func (m *Manager) shouldRestartForGlobalProxy(account Account) bool {
-	descriptor, _, err := providers.Resolve(account.Provider, account.ProviderRegion)
-	return err == nil &&
-		account.Enabled &&
-		strings.TrimSpace(account.ProxyURL) == "" &&
-		descriptor.Runtime == providers.RuntimeChildProcess
 }
 
 func (m *Manager) SyncCredential(ctx context.Context, id, authType string) error {

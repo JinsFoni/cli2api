@@ -59,21 +59,15 @@ func ResolveWorkBuddyCheckinTime(value, defaultTime string) (string, error) {
 	return NormalizeWorkBuddyCheckinTime(value)
 }
 
-// ValidateAccountProxy enforces the per-provider proxy boundary. Child-process
-// providers (Qoder) can only forward every cloud request through an http(s)
-// proxy, so SOCKS is rejected for them; in-process providers (WorkBuddy, Trae)
-// may use any scheme Parse accepts.
+// ValidateAccountProxy enforces the per-provider proxy boundary. All
+// providers are in-process now and the shared Go transport handles
+// http(s)/SOCKS alike, so any scheme Parse accepts is valid. The former
+// Qoder http-only rule existed because the Node worker's fetch could not
+// use SOCKS; that constraint died with the worker.
 func ValidateAccountProxy(providerID, region, raw string) error {
-	descriptor, _, err := providers.Resolve(providerID, region)
-	if err != nil {
+	if _, _, err := providers.Resolve(providerID, region); err != nil {
 		return err
 	}
-	if descriptor.Runtime == providers.RuntimeChildProcess {
-		if err := proxy.ValidateHTTPOnly(raw); err != nil {
-			return fmt.Errorf("Qoder account proxy: %w", err)
-		}
-		return nil
-	}
-	_, err = proxy.Parse(raw)
+	_, err := proxy.Parse(raw)
 	return err
 }

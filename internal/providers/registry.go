@@ -83,12 +83,13 @@ func (d ProviderDescriptor) SupportsAuthType(auth AuthType) bool {
 	return false
 }
 
-// Qoder descriptor. Region selects the pinned CLI and config directory:
-// global uses @qoder-ai/qodercli + .qoder, cn uses @qodercn-ai/qoderclicn + .qoder-cn.
+// Qoder descriptor. Chat/check-in/quota run natively in-process (the
+// per-account Node worker is retired by the qoder-native-path milestone);
+// region selects endpoints and the check-in policy.
 var Qoder = ProviderDescriptor{
 	ID:                "qoder",
 	Label:             "Qoder",
-	Runtime:           RuntimeChildProcess,
+	Runtime:           RuntimeInProcess,
 	AuthTypes:         []AuthType{AuthNone, AuthOAuth, AuthPAT, AuthNative},
 	CredentialFormats: []string{"qoder-native-v1"},
 	Capabilities: ProviderCapabilities{

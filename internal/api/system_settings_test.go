@@ -311,15 +311,16 @@ func TestSystemSettingsProxyURLAcceptsHTTP(t *testing.T) {
 // the new value after the first attempt, so repeating the PATCH with the *same*
 // value must still attempt the reload (and keep reporting the failure) instead
 // of being short-circuited as a no-op.
-func TestSystemSettingsProxyURLRetriesFailedReloadWithSameValue(t *testing.T) {
+func TestSystemSettingsProxyURLReloadSucceedsWithoutWorkers(t *testing.T) {
 	srv := New(config.Config{
 		Host: "127.0.0.1", Port: 3010, ProxyAPIKey: "secret",
 		QoderHome: t.TempDir(), DataDir: t.TempDir(),
 	})
 	defer srv.Close()
 
-	// An enabled inheriting Qoder account; with no daemon path configured its
-	// worker cannot start, so every reload attempt fails deterministically.
+	// Native path: an enabled inheriting Qoder account holds no worker, so a
+	// global proxy PATCH only persists the value and flips the shared
+	// transport — no reload failure can occur.
 	if _, err := srv.Manager.Store().Create(context.Background(), accounts.CreateAccount{Name: "Inherits", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -333,21 +334,18 @@ func TestSystemSettingsProxyURLRetriesFailedReloadWithSameValue(t *testing.T) {
 	const newProxy = "http://new-global.example:8080"
 
 	first := patch(`{"proxy_url":"` + newProxy + `"}`)
-	if first.Code != http.StatusInternalServerError {
+	if first.Code != http.StatusOK {
 		t.Fatalf("first reload response: %d %s", first.Code, first.Body.String())
 	}
 	stored, ok, err := srv.Manager.Store().GetSecret(context.Background(), proxyURLSecret)
 	if err != nil || !ok || stored != newProxy {
-		t.Fatalf("stored after failed reload: %q ok=%v err=%v", stored, ok, err)
+		t.Fatalf("stored after reload: %q ok=%v err=%v", stored, ok, err)
 	}
 
-	// Identical value: the write is skipped, but the reload is retried.
+	// Identical value: a no-op PATCH stays a success.
 	second := patch(`{"proxy_url":"` + newProxy + `"}`)
-	if second.Code != http.StatusInternalServerError {
-		t.Fatalf("retry was treated as a no-op: %d %s", second.Code, second.Body.String())
-	}
-	if !bytes.Contains(second.Body.Bytes(), []byte("proxy_reload_failed")) {
-		t.Fatalf("retry body = %s", second.Body.String())
+	if second.Code != http.StatusOK {
+		t.Fatalf("identical PATCH response: %d %s", second.Code, second.Body.String())
 	}
 }
 

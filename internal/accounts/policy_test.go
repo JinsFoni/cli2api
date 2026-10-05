@@ -57,9 +57,11 @@ func TestValidateModelContextLength(t *testing.T) {
 	}
 }
 
-func TestValidateAccountProxyRejectsQoderSOCKS(t *testing.T) {
-	if err := ValidateAccountProxy("qoder", "global", "socks5://proxy.example:1080"); err == nil {
-		t.Fatal("qoder socks must fail")
+func TestValidateAccountProxyAcceptsSOCKSForAllProviders(t *testing.T) {
+	// Native path: the shared Go transport handles SOCKS, so qoder no longer
+	// needs the worker-era http-only restriction.
+	if err := ValidateAccountProxy("qoder", "global", "socks5://proxy.example:1080"); err != nil {
+		t.Fatalf("qoder socks: %v", err)
 	}
 	if err := ValidateAccountProxy("workbuddy", "cn", "socks5://proxy.example:1080"); err != nil {
 		t.Fatalf("workbuddy socks: %v", err)

@@ -359,10 +359,10 @@ func (c *Client) Probe(ctx context.Context, accountID string) (providers.Account
 	healthHTTP := c.healthHTTP
 	locate := c.locate
 	c.mu.RUnlock()
-	// A running worker is the authority on readiness: it owns the chat runtime
-	// that must actually serve. Note the asymmetry with the pre-native shape:
-	// a pool miss ("", false) now falls through to the credential verdict
-	// instead of failing, so stopped accounts still report login state.
+	// Legacy worker fallback (pre-native accounts still served by a child
+	// process): a running worker remains the authority there. Native accounts
+	// never appear in the process table, so the locate miss falls through to
+	// the credential verdict below.
 	if locate != nil {
 		if workerURL, found := locate(accountID); found {
 			workerURL = strings.TrimRight(strings.TrimSpace(workerURL), "/")
@@ -380,15 +380,16 @@ func (c *Client) Probe(ctx context.Context, accountID string) (providers.Account
 					LastError: health.LastError,
 				}, nil
 			}
-			// Pool entry exists but has no URL yet (worker still starting):
-			// never report ready, chat could not be served.
-			return providers.AccountHealth{LastError: "qoder worker is starting"}, nil
 		}
 	}
-	// No pool entry: stopped or never-started account. The stored credential
-	// decides the login-state display; this never marks a routable account.
-	_, cred, err := c.resolvedCredential(ctx, accountID)
+	// Native readiness: the credential must decode and the chat identity
+	// (runtime fields, COSY pair) must assemble. Model routing still requires
+	// a catalog hit, so this never fabricates model availability.
+	account, cred, err := c.resolvedCredential(ctx, accountID)
 	if err != nil {
+		return providers.AccountHealth{LastError: err.Error()}, nil
+	}
+	if _, err := buildChatIdentity(account, cred); err != nil {
 		return providers.AccountHealth{LastError: err.Error()}, nil
 	}
 	return providers.AccountHealth{Ready: true, Hot: true, UID: cred.UID}, nil

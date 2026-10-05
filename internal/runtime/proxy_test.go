@@ -1,17 +1,13 @@
 package runtime_test
 
 import (
-	"context"
 	"fmt"
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	accountruntime "github.com/caigee-cmd/cli2api/internal/runtime"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	sqlstore "github.com/caigee-cmd/cli2api/internal/store"
 )
 
 func TestExecStarterSetProxyURLAppliesToNewWorkers(t *testing.T) {
@@ -101,101 +97,6 @@ func TestExecStarterConfigSnapshotConcurrentWithSetProxyURL(t *testing.T) {
 	wg.Wait()
 }
 
-func TestReloadProxyURLRestartsOnlyInheritingQoder(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	inherits, err := store.Create(ctx, accounts.CreateAccount{Name: "InheritsGlobal", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	overrides, err := store.Create(ctx, accounts.CreateAccount{Name: "HasAccountProxy", Enabled: true, ProxyURL: "http://account.example:9090"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workbuddy, err := store.Create(ctx, accounts.CreateAccount{Name: "WorkBuddy", Provider: "workbuddy", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	trae, err := store.Create(ctx, accounts.CreateAccount{Name: "Trae", Provider: "trae", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	starter := &fakeStarter{}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, starter)
-	defer manager.Close()
-	if err := manager.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	before := len(starter.accounts)
-
-	if err := manager.ReloadProxyURL(ctx, "http://new-global.example:8080"); err != nil {
-		t.Fatalf("ReloadProxyURL: %v", err)
-	}
-
-	restarted := map[string]bool{}
-	for _, account := range starter.accounts[before:] {
-		restarted[account.ID] = true
-	}
-	if !restarted[inherits.ID] {
-		t.Fatal("inheriting Qoder account was not restarted")
-	}
-	if restarted[overrides.ID] {
-		t.Fatal("Qoder account with its own proxy was restarted")
-	}
-	if restarted[workbuddy.ID] {
-		t.Fatal("WorkBuddy account was restarted (in-process)")
-	}
-	if restarted[trae.ID] {
-		t.Fatal("Trae account was restarted (in-process)")
-	}
-}
-
-func TestReloadProxyURLLogsAllFailuresAndContinues(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	first, err := store.Create(ctx, accounts.CreateAccount{Name: "First", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := store.Create(ctx, accounts.CreateAccount{Name: "Second", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	starter := &fakeStarter{}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, starter)
-	defer manager.Close()
-	if err := manager.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	// Force the next start attempt to fail; the reload must still attempt the
-	// remaining accounts and report the failure.
-	starter.failures = 1
-	if err := manager.ReloadProxyURL(ctx, "http://new-global.example:8080"); err == nil {
-		t.Fatal("expected a joined reload error")
-	}
-
-	attempted := map[string]bool{}
-	for _, account := range starter.accounts {
-		attempted[account.ID] = true
-	}
-	if !attempted[first.ID] || !attempted[second.ID] {
-		t.Fatalf("reload did not attempt every account: %v", attempted)
-	}
-}
-
 func starterEnvForTest(t *testing.T, starter *accountruntime.ExecStarter, account accounts.Account, home string, port int) []string {
 	t.Helper()
 	return starterEnvForTestConfig(t, starter.ConfigSnapshot(), account, home, port)
@@ -217,98 +118,6 @@ func envValue(env []string, key string) string {
 		}
 	}
 	return ""
-}
-
-func TestReloadProxyURLSkipsUnchangedValue(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	if _, err := store.Create(ctx, accounts.CreateAccount{Name: "Inherits", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	starter := &fakeStarter{}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyURL: "http://global.example:8080"}, store, starter)
-	defer manager.Close()
-	if err := manager.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(starter.accounts); got != 1 {
-		t.Fatalf("initial starts = %d, want 1", got)
-	}
-
-	// Same value (module whitespace): no worker restart.
-	if err := manager.ReloadProxyURL(ctx, "  http://global.example:8080  "); err != nil {
-		t.Fatalf("ReloadProxyURL: %v", err)
-	}
-	if got := len(starter.accounts); got != 1 {
-		t.Fatalf("worker restarted for an unchanged proxy: starts = %d, want 1", got)
-	}
-
-	// A real change still restarts.
-	if err := manager.ReloadProxyURL(ctx, "http://other.example:9090"); err != nil {
-		t.Fatalf("ReloadProxyURL: %v", err)
-	}
-	if got := len(starter.accounts); got != 2 {
-		t.Fatalf("worker not restarted for a changed proxy: starts = %d, want 2", got)
-	}
-}
-
-func TestReloadProxyURLRetriesAfterFailureWithSameValue(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	if _, err := store.Create(ctx, accounts.CreateAccount{Name: "Inherits", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	starter := &fakeStarter{}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyURL: "http://old.example:8080"}, store, starter)
-	defer manager.Close()
-	if err := manager.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(starter.accounts); got != 1 {
-		t.Fatalf("initial starts = %d, want 1", got)
-	}
-
-	const newProxy = "http://new.example:9090"
-
-	// Attempt to switch to the new proxy with an already-cancelled context:
-	// the restart fails, so the reload reports an error.
-	cancelled, cancel := context.WithCancel(ctx)
-	cancel()
-	if err := manager.ReloadProxyURL(cancelled, newProxy); err == nil {
-		t.Fatal("reload with a cancelled context unexpectedly succeeded")
-	}
-	if got := len(starter.accounts); got != 1 {
-		t.Fatalf("failed reload restarted workers: starts = %d, want 1", got)
-	}
-
-	// Resubmitting the *same* value with a healthy context must retry and
-	// restart the inheriting worker.
-	if err := manager.ReloadProxyURL(ctx, newProxy); err != nil {
-		t.Fatalf("retry with the same value failed: %v", err)
-	}
-	if got := len(starter.accounts); got != 2 {
-		t.Fatalf("retry did not restart the worker: starts = %d, want 2", got)
-	}
-
-	// Now that the reload succeeded, an identical value is a genuine no-op.
-	if err := manager.ReloadProxyURL(ctx, newProxy); err != nil {
-		t.Fatalf("post-success no-op reload: %v", err)
-	}
-	if got := len(starter.accounts); got != 2 {
-		t.Fatalf("post-success identical value restarted the worker: starts = %d, want 2", got)
-	}
 }
 
 func TestExecStarterConcurrentKeyProxyAndSnapshot(t *testing.T) {

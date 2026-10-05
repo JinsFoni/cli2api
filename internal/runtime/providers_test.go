@@ -49,13 +49,15 @@ func TestManagerDoesNotSpawnDaemonForInProcessProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(starter.accounts) != 1 || starter.accounts[0].ID != qoder.ID {
-		t.Fatalf("qoder should spawn exactly one daemon, started=%+v", starter.accounts)
+	// Native path: qoder is in-process like workbuddy, no daemon spawn.
+	if len(starter.accounts) != 0 {
+		t.Fatalf("qoder spawned %d daemons, want 0", len(starter.accounts))
 	}
 	qItem, ok := manager.Pool().ByID(qoder.ID)
-	if !ok || qItem.Provider != "qoder" || qItem.Runtime != "child_process" {
+	if !ok || qItem.Provider != "qoder" || qItem.Runtime != "in_process" {
 		t.Fatalf("qoder pool item = %+v ok=%v", qItem, ok)
 	}
+	_ = qoder
 }
 
 type fakeProber struct {
