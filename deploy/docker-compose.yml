@@ -1,16 +1,7 @@
 services:
   qoder-api-proxy:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: "${CLI2API_IMAGE:-ghcr.io/caigee-cmd/cli2api:latest}"
+    image: ghcr.io/caigee-cmd/cli2api:latest
     container_name: qoder-api-proxy
-    # Optional host-updater integration (see deploy/README.md); unset keys
-    # simply stay empty. Set QODER_PROXY_URL here if the account needs one.
-    environment:
-      UPDATE_AGENT_URL: "${UPDATE_AGENT_URL:-}"
-      UPDATE_AGENT_TOKEN: "${UPDATE_AGENT_TOKEN:-}"
-      UPDATE_GITHUB_TOKEN: "${UPDATE_GITHUB_TOKEN:-}"
     volumes:
       - ./qoder-data:/data
       - ./cli2api-updater:/run/cli2api-updater:ro

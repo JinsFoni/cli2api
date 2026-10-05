@@ -40,12 +40,20 @@ type Executor struct {
 
 type commandRunner interface {
 	Run(context.Context, string, ...string) ([]byte, error)
+	RunEnv(context.Context, []string, string, ...string) ([]byte, error)
 }
 
 type execCommandRunner struct{}
 
 func (execCommandRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return execCommandRunner{}.RunEnv(ctx, nil, name, args...)
+}
+
+func (execCommandRunner) RunEnv(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return output, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
@@ -159,7 +167,7 @@ func (e *Executor) Apply(ctx context.Context, _ string, request ApplyRequest, pr
 		}
 	}
 	progress("recreating")
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--force-recreate", e.config.ServiceName); err != nil {
+	if err := e.compose(ctx, targetImage, "up", "-d", "--no-deps", "--force-recreate", e.config.ServiceName); err != nil {
 		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	after, err := e.inspectContainer(ctx)
@@ -197,13 +205,13 @@ func (e *Executor) rollback(request ApplyRequest, before containerInspect, mount
 
 	progress("rolling_back")
 	e.discardStagedHostBinary()
-	if err := e.compose(ctx, "stop", e.config.ServiceName); err != nil {
+	if err := e.compose(ctx, currentImage, "stop", e.config.ServiceName); err != nil {
 		return false, rollbackFailed(cause, err)
 	}
 	if err := e.restoreSQLite(ctx, mount, currentImage, request.BackupPath); err != nil {
 		return false, rollbackFailed(cause, err)
 	}
-	if err := e.compose(ctx, "up", "-d", "--no-deps", "--force-recreate", e.config.ServiceName); err != nil {
+	if err := e.compose(ctx, currentImage, "up", "-d", "--no-deps", "--force-recreate", e.config.ServiceName); err != nil {
 		return false, rollbackFailed(cause, err)
 	}
 	after, err := e.inspectContainer(ctx)
@@ -246,13 +254,14 @@ sync`
 	return nil
 }
 
-// compose pins the image through the process environment: Compose variable
-// substitution prefers real environment variables over any env-file or
-// override file, so the pinned tag always wins during an update.
-func (e *Executor) compose(ctx context.Context, args ...string) error {
+// compose pins the image for the invoked command through the process
+// environment: Compose variable substitution prefers real environment
+// variables over any override file, so the pinned tag always wins while an
+// update (or its rollback) recreates the service.
+func (e *Executor) compose(ctx context.Context, image string, args ...string) error {
 	commandArgs := []string{"compose", "-f", e.config.ComposeFile}
 	commandArgs = append(commandArgs, args...)
-	_, err := e.runner.Run(ctx, "docker", commandArgs...)
+	_, err := e.runner.RunEnv(ctx, []string{"CLI2API_IMAGE=" + image}, "docker", commandArgs...)
 	return err
 }
 

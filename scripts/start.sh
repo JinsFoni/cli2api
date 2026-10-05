@@ -6,11 +6,10 @@ COMPOSE=(docker compose -f "${ROOT_DIR}/deploy/docker-compose.yml")
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ! "${COMPOSE[@]}" pull; then
-  echo "Published image unavailable; building the image locally."
-  "${COMPOSE[@]}" up -d --build
-else
-  "${COMPOSE[@]}" up -d
+  echo "Failed to pull ghcr.io/caigee-cmd/cli2api:latest; check your network or registry access." >&2
+  exit 1
 fi
+"${COMPOSE[@]}" up -d
 
 for _ in {1..60}; do
   if curl -fsS http://127.0.0.1:3010/health >/dev/null 2>&1; then

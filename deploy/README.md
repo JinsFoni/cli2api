@@ -22,8 +22,7 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ```
 
-Both launchers pull the published image, fall back to a local build when
-necessary, and wait for `/health`.
+Both launchers pull the published image and wait for `/health`.
 
 To run Compose directly:
 
@@ -31,8 +30,8 @@ To run Compose directly:
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Add `--build` to build from the checked-out source. Only `127.0.0.1:3010` is
-published.
+The image always comes from `ghcr.io/caigee-cmd/cli2api:latest`; only
+`127.0.0.1:3010` is published.
 
 Save the administrator key printed once in the first-start logs:
 

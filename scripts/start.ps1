@@ -22,11 +22,9 @@ if ($LASTEXITCODE -ne 0) {
 
 $StartedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 if (-not (Invoke-Compose pull)) {
-    Write-Host "Published image unavailable; building the image locally."
-    if (-not (Invoke-Compose up -d --build)) {
-        throw "Failed to build and start CLI2API."
-    }
-} elseif (-not (Invoke-Compose up -d)) {
+    throw "Failed to pull ghcr.io/caigee-cmd/cli2api:latest; check your network or registry access."
+}
+if (-not (Invoke-Compose up -d)) {
     throw "Failed to start CLI2API."
 }
 

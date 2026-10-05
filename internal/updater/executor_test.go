@@ -22,6 +22,7 @@ type runnerStep struct {
 	err           error
 	requireActive bool
 	beforeReturn  func()
+	env           string
 }
 
 type scriptedRunner struct {
@@ -31,6 +32,10 @@ type scriptedRunner struct {
 }
 
 func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return r.RunEnv(ctx, nil, name, args...)
+}
+
+func (r *scriptedRunner) RunEnv(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	r.t.Helper()
 	if r.index >= len(r.steps) {
 		r.t.Fatalf("unexpected command: %s %s", name, strings.Join(args, " "))
@@ -39,6 +44,14 @@ func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) (
 	r.index++
 	if name != step.name || !reflect.DeepEqual(args, step.args) {
 		r.t.Fatalf("command %d = %s %q, want %s %q", r.index, name, args, step.name, step.args)
+	}
+	if step.env != "" {
+		joined := strings.Join(env, ",")
+		if !strings.Contains(joined, step.env) {
+			r.t.Fatalf("command %d env = %q, want %q", r.index, joined, step.env)
+		}
+	} else if len(env) > 0 {
+		r.t.Fatalf("command %d carried unexpected env %q", r.index, strings.Join(env, ","))
 	}
 	if step.requireActive && ctx.Err() != nil {
 		r.t.Fatalf("command %d received canceled context: %v", r.index, ctx.Err())
@@ -90,7 +103,7 @@ func TestExecutorApplySuccess(t *testing.T) {
 		{name: "docker", args: []string{"image", "tag", "sha256:old", currentImage}},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", `test -f "$BACKUP_PATH"`}},
 		{name: "docker", args: []string{"pull", targetImage}},
-		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy")},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), env: "CLI2API_IMAGE=" + targetImage},
 		{name: "docker", args: []string{"inspect", "qoder-api-proxy"}, output: inspectAfter},
 		{name: "docker", args: []string{"network", "connect", "--alias", "qoder-api-proxy", "sub2api-deploy_sub2api-network", "qoder-api-proxy"}},
 	}}
@@ -152,10 +165,10 @@ func TestExecutorRollbackUsesFreshContextAndOldImage(t *testing.T) {
 		{name: "docker", args: []string{"image", "tag", "sha256:old", currentImage}},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", `test -f "$BACKUP_PATH"`}},
 		{name: "docker", args: []string{"pull", targetImage}},
-		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), err: errors.New("recreate failed"), beforeReturn: cancelApply},
-		{name: "docker", args: composeArgs(composePath, "stop", "qoder-api-proxy"), requireActive: true},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), err: errors.New("recreate failed"), beforeReturn: cancelApply, env: "CLI2API_IMAGE=" + targetImage},
+		{name: "docker", args: composeArgs(composePath, "stop", "qoder-api-proxy"), requireActive: true, env: "CLI2API_IMAGE=" + currentImage},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", restoreSQLiteScript()}, requireActive: true},
-		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), requireActive: true},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), requireActive: true, env: "CLI2API_IMAGE=" + currentImage},
 		{name: "docker", args: []string{"inspect", "qoder-api-proxy"}, output: inspectOutputWithNetworks("sha256:old", "qoder-data", map[string][]string{
 			"deploy_default": {"qoder-api-proxy"},
 		}), requireActive: true},
