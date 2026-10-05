@@ -119,9 +119,10 @@ func TestCheckinSchedulerSkipsDisabledCampaignButManualCanRecheck(t *testing.T) 
 }
 
 func TestCheckinRejectsDisabledAndUnsupportedAccounts(t *testing.T) {
+	var calls atomic.Int64
 	manager, account := newCheckinManager(t, checkinFunc(func(context.Context, string) (providers.CheckinResult, error) {
-		t.Error("unexpected upstream request")
-		return providers.CheckinResult{}, nil
+		calls.Add(1)
+		return providers.CheckinResult{Status: "success", Message: "claimed"}, nil
 	}))
 	disabled := false
 	if err := manager.store.Update(context.Background(), account.ID, accounts.UpdateAccount{Enabled: &disabled}); err != nil {
@@ -130,12 +131,31 @@ func TestCheckinRejectsDisabledAndUnsupportedAccounts(t *testing.T) {
 	if _, err := manager.CheckinAccount(context.Background(), account.ID); err == nil {
 		t.Fatal("disabled account accepted")
 	}
+	if calls.Load() != 0 {
+		t.Fatal("disabled account reached the adapter")
+	}
 	global, err := manager.store.Create(context.Background(), accounts.CreateAccount{Name: "global", Provider: "qoder", Region: "global", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.CheckinAccount(context.Background(), global.ID); !errors.Is(err, providers.ErrUnsupported) {
+	// Both Qoder regions carry a check-in policy now, so a global qoder
+	// account reaches the adapter like its CN sibling; the unsupported path
+	// needs a provider whose adapter is absent from the registry.
+	if _, supported := providers.CheckinFor("qoder", "global"); !supported {
+		t.Fatal("qoder global must declare check-in support")
+	}
+	if _, err := manager.CheckinAccount(context.Background(), global.ID); err != nil || calls.Load() != 1 {
+		t.Fatalf("global qoder account should check in: err=%v calls=%d", err, calls.Load())
+	}
+	ghost, err := manager.store.Create(context.Background(), accounts.CreateAccount{Name: "ghost", Provider: "codex", Region: "global", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CheckinAccount(context.Background(), ghost.ID); !errors.Is(err, providers.ErrUnsupported) {
 		t.Fatalf("err=%v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("unsupported account reached the adapter: calls=%d", calls.Load())
 	}
 }
 
