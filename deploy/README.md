@@ -56,8 +56,8 @@ Use **Accounts** to add an account with its supported login method:
 | Devin (experimental) | Global | Browser OAuth, `devin-session-v1` |
 
 Qoder CN, WorkBuddy, and Trae still need live-account acceptance; Devin is not
-claimed production-ready. Qoder uses one isolated Node worker per account.
-Other providers use Go in-process adapters. All durable credentials stay in SQLite.
+claimed production-ready. All providers run as Go in-process adapters; the image
+needs no Node runtime. All durable credentials stay in SQLite.
 
 WorkBuddy daily check-in and token keepalive are per-account opt-in and disabled
 by default. Enable them only if you want those automatic account operations.
@@ -130,13 +130,9 @@ console; environment variables cannot replace it.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `QODER_DATA_DIR` | `/data` | SQLite database and durable account credentials |
-| `QODER_RUNTIME_DIR` | `/run/cli2api` | Ephemeral per-account runtime homes for providers that use child processes |
 | `QODER_MAX_RETRY_ACCOUNTS` | `4` | Maximum accounts attempted for one request (1-64) |
 | `QODER_SSE_DIAGNOSTIC_MODELS` | empty | Comma-separated Qoder model IDs for redacted SSE diagnostics in Runtime Logs; `*` enables all |
-| `QODER_WORKER_BASE_PORT` | `32100` | Internal child-runtime port range |
 | `QODER_PROXY_URL` | empty | Initial global outbound proxy: `http(s)://`, `direct`, or `none`; saved console settings take precedence |
-| `QODERCLI_JS` | image default | Pinned Qoder Global CLI bundle |
-| `QODERCNCLI_JS` | image default | Pinned Qoder CN CLI bundle |
 | `UPDATE_GITHUB_TOKEN` | empty | Optional GitHub token for release checks |
 | `UPDATE_AGENT_URL` | empty | Docker Desktop host updater URL, written by the installer |
 | `UPDATE_AGENT_TOKEN` | empty | Docker Desktop updater token, written by the installer |

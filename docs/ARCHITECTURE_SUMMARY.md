@@ -6,7 +6,7 @@ status: canonical
 read-when: 需要快速理解后端分层、请求路径、运行时和 provider 扩展边界时
 summary: 面向贡献者和 AI 的精简架构摘要；详细协议、里程碑和本地运维资料不在本文维护。
 related: [AGENTS.md, CONTRIBUTING.md, docs/DESIGN.md, docs/REFACTORING.md, docs/NATIVE_PROTOCOL_REQUESTS.md]
-last-updated: 2026-09-24
+last-updated: 2026-10-05
 ---
 
 # CLI2API 架构摘要
@@ -16,11 +16,11 @@ last-updated: 2026-09-24
 
 ## 产品边界
 
-CLI2API 是一个面向个人部署的 Go + Node 网关：
+CLI2API 是一个面向个人部署的纯 Go 网关（无 Node 运行时依赖）：
 
 - 对外提供 OpenAI Chat Completions、Anthropic Messages、OpenAI Responses 和 Models 兼容接口。
 - 管理多个上游账号，并按 provider、region、model、pin、会话粘性和冷却状态选号。
-- Qoder 使用每账号隔离的 Node child process；WorkBuddy、Trae CN Work 和 Devin 使用 Go 进程内 adapter。
+- 所有 provider（Qoder、WorkBuddy、Trae CN Work、Devin、Command Code）都使用 Go 进程内 adapter。
 - 控制台负责账号、密钥、设置、目录、日志、登录、导入和更新操作。
 - 这是个人网关，不实现计费、Redis 槽位、多租户商业网关或公开暴露的管理端口。
 
@@ -33,7 +33,7 @@ cmd/server
         ├── internal/gateway  公有 /v1 协议 HTTP 与 SSE
         ├── internal/console  操作员 /api/* HTTP
         ├── internal/control  控制面编排与目录展示缓存
-        ├── internal/runtime  账号生命周期、Qoder worker、刷新与维护循环
+        ├── internal/runtime  账号生命周期、刷新与维护循环
         ├── internal/executor 选号、请求准备、分类、冷却与 failover
         ├── internal/store    SQLite、迁移、持久化请求记录
         ├── internal/providers provider 注册、协议客户端、adapter
@@ -47,7 +47,7 @@ cmd/server
 1. `server` 将公有 `/v1/*` 请求交给 `gateway`，将控制台 `/api/*` 请求交给 `console`。
 2. `gateway` 校验并解析 OpenAI、Anthropic 或 Responses 输入，转换为公共请求模型。
 3. `executor` 根据显式账号 pin、会话粘性和账号池选择 runtime，并执行请求准备。
-4. provider adapter 或 Qoder worker 负责上游协议、认证、HTTP/SSE 或 Connect-RPC。
+4. provider adapter 负责上游协议、认证和 HTTP/SSE。
 5. `executor` 负责错误分类、冷却、重试和 failover；`gateway` 只负责公共协议响应和流式输出。
 6. 请求元数据写入日志；不要默认保存 prompt、completion、密钥或凭证内容。
 
@@ -61,7 +61,7 @@ cmd/server
 | `accounts` | 账号实体、凭证契约、纯账号规则 | Pool、Manager、HTTP handler |
 | `store` | SQLite repository、不可变 migration、持久化 | 路由策略、密钥业务生成 |
 | `control` | 账号/密钥/设置/登录/导入/目录编排 | 公有协议转换、provider payload |
-| `runtime` | 账号生命周期、进程表、刷新、维护循环 | 公共协议和选号策略 |
+| `runtime` | 账号生命周期、刷新、维护循环 | 公共协议和选号策略 |
 | `executor` | Pool、选号、prepare、分类、冷却、failover | SQLite、HTTP handler、具体 provider policy |
 | `gateway` | `/v1/*` 校验、转换、SSE 和公共错误 | store、runtime Manager、具体 provider |
 | `console` | `/api/*` 解码、授权、错误映射 | store、runtime Manager、具体 provider |
@@ -71,10 +71,9 @@ cmd/server
 ## Provider 边界
 
 - Qoder Global 和 Qoder CN 是同一个 `provider=qoder`，通过 `region` 区分，不创建新的 provider family。
-- Qoder 每个账号使用独立 HOME 和独立 child process；不得为每个请求启动完整 CLI agent。
-- Qoder 的签到、额度快照与登录态探测在 Go 进程内直连 openapi HTTP（存储凭证 AES 解密、401 自动刷新写回）；worker 只承担聊天推理与 `/admin/quota` 热路径兜底。
-- Qoder 的 CLI / worker 兼容性版本固定在 `worker/src/compat.mjs`，不兼容时应明确失败。
-- WorkBuddy、Trae CN Work、Devin 使用进程内 adapter，不复制 Qoder worker 生命周期。
+- Qoder 全链路在 Go 进程内完成：聊天推理走 COSY 签名直连网关 HTTP，PAT 登录（jobToken 交换 + userinfo）、模型目录（model/list）、签到、额度快照与登录态探测都直连 openapi HTTP（存储凭证 AES 解密、401 自动刷新写回）。不启动 child process，不为每个请求启动完整 CLI agent。
+- Qoder 登录使用 PAT 流程；设备码流程已退役（`StartLogin`/`PollLogin` 返回明确错误）。
+- WorkBuddy、Trae CN Work、Devin、Command Code 同样使用进程内 adapter。
 - provider 负责上游事实映射；executor 负责是否切号、冷却多久和是否 failover。
 - Provider 能力、模型目录和 reasoning level 必须以实际 catalog 声明为准，不凭空增加模型能力。
 

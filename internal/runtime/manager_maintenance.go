@@ -89,8 +89,6 @@ func (manager *Manager) refreshCheckinQuota(ctx context.Context, accountID strin
 	}
 	if adapter.Prober != nil {
 		manager.fetchProviderQuota(ctx, accountID, adapter.Prober)
-	} else if workerURL, found := manager.AccountURL(accountID); found {
-		manager.fetchQuota(ctx, accountID, workerURL, true)
 	}
 }
 

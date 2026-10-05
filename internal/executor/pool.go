@@ -333,7 +333,7 @@ func NewPool(urls []string, ids []string) *Pool {
 			id = "worker-" + itoa(i+1)
 		}
 		items = append(items, Item{
-			ID: id, URL: url, Provider: "qoder", Runtime: "child_process",
+			ID: id, URL: url, Provider: "qoder", Runtime: "in_process",
 		})
 	}
 	return &Pool{items: items, routingStrategy: RoutingStrategyRoundRobin}

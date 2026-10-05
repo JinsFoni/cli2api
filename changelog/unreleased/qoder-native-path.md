@@ -4,11 +4,12 @@
 - Multiple Qoder accounts no longer cost hundreds of MB each; memory usage
   with many accounts drops to near zero for idle accounts.
 - Node.js and the qodercli / qoderclicn packages are no longer required at
-  runtime. SOCKS proxies are now supported for Qoder accounts.
+  runtime — the Docker image no longer ships a Node layer. SOCKS proxies are
+  now supported for Qoder accounts.
 
 ### 中文
 - Qoder 账号改为全进程内原生实现:chat、登录、模型目录、签到与用量不再
   为每个账号拉起 Node worker。
 - 多账号场景下,空闲账号内存占用接近零,不再每个账号消耗数百 MB。
-- 运行时不再需要 Node.js 与 qodercli / qoderclicn 包;Qoder 账号现支持
-  SOCKS 代理。
+- 运行时不再需要 Node.js 与 qodercli / qoderclicn 包,Docker 镜像也不再
+  包含 Node 层;Qoder 账号现支持 SOCKS 代理。

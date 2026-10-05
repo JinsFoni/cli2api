@@ -22,10 +22,10 @@ func TestLoadAccountRuntimeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DataDir != "/tmp/qoder-data" || cfg.WorkerBasePort != 33000 || cfg.RuntimeDir == "" {
+	if cfg.DataDir != "/tmp/qoder-data" || cfg.RuntimeDir == "" {
 		t.Fatalf("runtime config = %+v", cfg)
 	}
-	if cfg.NodeBinary == "" || cfg.WorkerDaemonPath == "" || cfg.QoderCLIPath == "" || cfg.UpdateSocketPath == "" {
+	if cfg.UpdateSocketPath == "" {
 		t.Fatalf("missing runtime paths: %+v", cfg)
 	}
 }

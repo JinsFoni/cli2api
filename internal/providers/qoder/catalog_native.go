@@ -51,9 +51,9 @@ func (c catalogClient) endpointFor() (nativeEndpoints, bool) {
 func chatEndpoint(region string) (nativeEndpoints, bool) {
 	switch strings.ToLower(strings.TrimSpace(region)) {
 	case "cn":
-		return nativeEndpoints{base: "https://gateway.qoder.com.cn", origin: "https://qoder.com.cn"}, true
+		return nativeEndpoints{Base: "https://gateway.qoder.com.cn", Origin: "https://qoder.com.cn"}, true
 	case "global":
-		return nativeEndpoints{base: "https://api1.qoder.sh", origin: "https://qoder.com"}, true
+		return nativeEndpoints{Base: "https://api1.qoder.sh", Origin: "https://qoder.com"}, true
 	default:
 		return nativeEndpoints{}, false
 	}
@@ -87,7 +87,7 @@ func (c catalogClient) signedCatalogRequest(ctx context.Context, clock func() ti
 	payloadB64 := base64Std([]byte(payload))
 	signature := cosySignature(payloadB64, c.Identity.Key, unixStr, "", signedPath)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.base+catalogPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.Base+catalogPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +165,11 @@ func (c *Client) FetchModelsNative(ctx context.Context, accountID string) ([]pro
 		HTTP:     httpClient,
 		Region:   account.ProviderRegion,
 		Identity: identity,
+		Endpoints: func() map[string]nativeEndpoints {
+			c.mu.RLock()
+			defer c.mu.RUnlock()
+			return c.endpointsOverride
+		}(),
 	}
 	rawEntries, err := cc.fetchCatalogRaw(ctx)
 	if err != nil {
@@ -239,6 +244,11 @@ func (c *Client) FetchModelsNativeRows(ctx context.Context, accountID string) ([
 		HTTP:     httpClient,
 		Region:   account.ProviderRegion,
 		Identity: identity,
+		Endpoints: func() map[string]nativeEndpoints {
+			c.mu.RLock()
+			defer c.mu.RUnlock()
+			return c.endpointsOverride
+		}(),
 	}
 	entries, err := cc.fetchCatalogRaw(ctx)
 	if err != nil {

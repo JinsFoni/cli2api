@@ -56,10 +56,10 @@ Get a model ID from **Access** or `/v1/models`. Routing is automatic and prefers
 ## How it works
 
 <p align="center">
-  <img src="./docs/assets/readme/architecture-en.svg" width="100%" alt="CLI2API architecture: OpenAI clients are routed by the Go control plane to one isolated runtime per account, then to the provider upstream">
+  <img src="./docs/assets/readme/architecture-en.svg" width="100%" alt="CLI2API architecture: OpenAI clients are routed by the Go control plane to in-process adapters, then to the provider upstream">
 </p>
 
-The Go gateway handles authentication, routing, and request logging. Each Qoder account has its own Node process and HOME; WorkBuddy, Trae, Devin, and Command Code use Go in-process adapters. No full CLI is started per request.
+The Go gateway handles authentication, routing, and request logging. Every provider (Qoder, WorkBuddy, Trae, Devin, Command Code) runs through Go in-process adapters that talk directly to the upstream API — no Node runtime and no full CLI per request.
 
 ## Console
 

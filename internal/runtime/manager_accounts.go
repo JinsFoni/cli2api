@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/caigee-cmd/cli2api/internal/providers"
 	proxyutil "github.com/caigee-cmd/cli2api/internal/proxy"
 )
 
@@ -50,15 +49,6 @@ func (m *Manager) SyncAccount(ctx context.Context, before, after Account) error 
 	}
 	if !before.Enabled && after.Enabled {
 		return m.startAccountWithRecovery(ctx, after)
-	}
-	if before.Enabled && after.Enabled && before.ProxyURL != after.ProxyURL {
-		descriptor, _, resolveErr := providers.Resolve(after.Provider, after.ProviderRegion)
-		if resolveErr == nil && descriptor.Runtime == providers.RuntimeChildProcess {
-			if err := m.stopAccount(after.ID); err != nil {
-				return err
-			}
-			return m.startAccountWithRecovery(ctx, after)
-		}
 	}
 	if before.Enabled && after.Enabled && before.MaxInFlight != after.MaxInFlight {
 		if err := m.stopAccount(after.ID); err != nil {

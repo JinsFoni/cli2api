@@ -7,11 +7,10 @@ before feature work, fetch and merge the latest `origin/main` into your branch.
 
 ## Setup
 
-Requirements: Go from `go.mod`, Node 22+, and npm.
+Requirements: Go from `go.mod`. The frontend build needs Node 22+ and npm.
 
 ```bash
 go mod download
-(cd worker && npm ci)
 (cd frontend && npm ci)
 ```
 
@@ -22,7 +21,6 @@ go test ./internal/app -run 'TestImportConstraints|TestDutyBoundaries' -count=1
 go test ./...
 go test -race ./...
 go vet ./...
-(cd worker && npm test)
 (cd frontend && npm run build && npm run lint)
 git diff --check
 ```
@@ -59,10 +57,9 @@ series bump.
 ## Rules
 
 - Keep the Go layers: auth / endpoint / executor / translate, plus store / control / runtime / gateway / console / server / app. `internal/api` is a test-only facade over `app.New`; do not add business there.
-- Keep one isolated runtime per enabled account: Qoder uses one HOME and Node daemon;
-  in-process providers use their adapter and must not spawn a child daemon
-- Keep qodercli compatibility checks in `worker/src/compat.mjs`
-- Preserve the proven WASM encode and HTTP/SSE request path
+- Keep every provider in-process: one pool item per account, no child daemons
+- Preserve the proven native encode (Encode=1) and COSY-signed HTTP/SSE request path
+  (protocol fixtures in `internal/providers/qoder/testdata/native/`)
 - Use HeroUI for console components
 - Add tests for account, routing, API, or translation behavior changes
 - Treat shipped SQLite migration SQL as immutable. Append a new numbered entry in `internal/store/migrations.go`; pin checksums in `internal/store` tests.

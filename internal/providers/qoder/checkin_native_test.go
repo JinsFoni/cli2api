@@ -188,7 +188,7 @@ func cnAccount(_ string) accounts.Account {
 func pointCnAt(t *testing.T, client *Client, upstreamURL string) {
 	t.Helper()
 	client.setEndpoints(map[string]nativeEndpoints{
-		"cn": {base: upstreamURL, origin: upstreamURL},
+		"cn": {Base: upstreamURL, Origin: upstreamURL},
 	})
 }
 
@@ -573,36 +573,6 @@ func TestNativeQuotaDecodesUpstream(t *testing.T) {
 	}
 }
 
-func TestNativeQuotaFallsBackToWorkerWithoutStore(t *testing.T) {
-	var quotaHits int
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/admin/quota" {
-			t.Errorf("path = %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		quotaHits++
-		_, _ = w.Write([]byte(`{"ok":true,"quota":{"isQuotaExceeded":false,"fetchedAt":"now","userQuota":{"total":30,"used":12,"remaining":18,"percentage":40,"unit":"credits"}}}`))
-	}))
-	defer worker.Close()
-
-	// No native store: the structural fallback reaches the worker hot path.
-	client := NewClient(nil)
-	client.SetHTTP(worker.Client())
-	client.Bind(func(string) (string, bool) { return worker.URL, true }, func() string { return "local-key" })
-
-	snapshot, err := client.QuotaSnapshot(context.Background(), "acc-1", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if quotaHits != 1 {
-		t.Fatalf("worker quota hits = %d", quotaHits)
-	}
-	if snapshot == nil || snapshot.Remaining != 18 {
-		t.Fatalf("snapshot = %+v", snapshot)
-	}
-}
-
 func TestNativeQuotaFallsBackToWorkerWhenDecodeFails(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -679,21 +649,12 @@ func TestDisabledAccountNativeCheckinSkipsWorker(t *testing.T) {
 	}
 }
 
-func TestProbeRunsWorkerHealthWhenRunning(t *testing.T) {
-	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
-			t.Errorf("path = %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":true,"ready":true,"hot":true,"uid":"u-1"}`))
-	}))
-	defer health.Close()
-
+func TestProbeIgnoresBoundWorkerLocate(t *testing.T) {
+	// Even with a locate hit bound, the native probe decides purely from the
+	// stored credential; there is no worker health call on the native path.
 	store := &fakeNativeStore{account: cnAccount("http://unused"), credential: encryptedCredential(t, machineID, nil)}
 	client := newNativeClient(store)
-	client.SetHTTP(health.Client())
-	client.Bind(func(string) (string, bool) { return health.URL, true }, func() string { return "" })
+	client.Bind(func(string) (string, bool) { return "http://127.0.0.1:1", true }, func() string { return "" })
 
 	got, err := client.Probe(context.Background(), "acc-1")
 	if err != nil {
@@ -701,25 +662,6 @@ func TestProbeRunsWorkerHealthWhenRunning(t *testing.T) {
 	}
 	if !got.Ready || !got.Hot || got.UID != "u-1" {
 		t.Fatalf("health = %+v", got)
-	}
-}
-
-func TestProbeRunningWorkerUnavailableTakesWorkerVerdict(t *testing.T) {
-	store := &fakeNativeStore{account: cnAccount("http://unused"), credential: encryptedCredential(t, machineID, nil)}
-	client := newNativeClient(store)
-	// Bound locate returns a URL whose worker is not reachable: a running
-	// worker's own verdict wins over a credential-derived guess.
-	client.Bind(func(string) (string, bool) { return "http://127.0.0.1:1", true }, func() string { return "" })
-
-	got, err := client.Probe(context.Background(), "acc-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Ready {
-		t.Fatalf("worker-down item must not report ready: %+v", got)
-	}
-	if got.LastError == "" {
-		t.Fatal("worker-down probe must carry the worker error")
 	}
 }
 

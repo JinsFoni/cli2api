@@ -56,10 +56,10 @@ API Key:  <在 API keys 页面创建的客户端密钥>
 ## 工作方式
 
 <p align="center">
-  <img src="./docs/assets/readme/architecture-zh.svg" width="100%" alt="CLI2API 架构：OpenAI 客户端经 Go 控制面路由到每账号独立运行时，再连接各 provider 上游">
+  <img src="./docs/assets/readme/architecture-zh.svg" width="100%" alt="CLI2API 架构：OpenAI 客户端经 Go 控制面路由到进程内适配器，再连接各 provider 上游">
 </p>
 
-Go 网关统一鉴权、调度和记录请求。Qoder 每个账号使用独立 Node 进程与 HOME；WorkBuddy、Trae、Devin、Command Code 使用 Go 进程内适配器，不为每次请求启动完整 CLI。
+Go 网关统一鉴权、调度和记录请求。所有 provider（Qoder、WorkBuddy、Trae、Devin、Command Code）都使用 Go 进程内适配器直连上游 API，无需 Node 运行时，也不为每次请求启动完整 CLI。
 
 ## 控制台
 

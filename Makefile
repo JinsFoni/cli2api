@@ -5,9 +5,8 @@ help: ## Show this help
 
 # ── Go ──────────────────────────────────────────────────────────────
 
-test: ## Run Go and worker tests
+test: ## Run Go tests
 	go test ./...
-	$(MAKE) -C worker test
 
 vet: ## Run Go vet
 	go vet ./...

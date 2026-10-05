@@ -26,7 +26,7 @@ func newCheckinManager(t *testing.T, checkiner providers.AccountCheckiner) (*Man
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	manager := NewManager(ManagerConfig{DataDir: t.TempDir()}, store, nil)
+	manager := NewManager(ManagerConfig{DataDir: t.TempDir()}, store)
 	t.Cleanup(func() { manager.Close() })
 	registry := providers.NewRegistry()
 	registry.Register(providers.Adapter{ID: "qoder", Checkin: checkiner})

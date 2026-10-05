@@ -93,9 +93,11 @@ func (a *CatalogSource) fetchProviderModels(refresh bool, accountID string, mode
 		if accountID != "" && item.ID != accountID {
 			continue
 		}
-		if item.Provider == "" || item.Provider == "qoder" {
+		if item.Provider == "" {
 			continue
 		}
+		// Qoder's display catalog comes from WorkerModels (the injected
+		// native fetch) rather than a registered adapter.Models.
 		adapter, ok := a.Providers.Get(item.Provider)
 		if !ok || adapter.Models == nil {
 			continue

@@ -2,12 +2,12 @@ package runtime_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/executor"
 	"github.com/caigee-cmd/cli2api/internal/providers"
+	"github.com/caigee-cmd/cli2api/internal/providers/qoder"
 	accountruntime "github.com/caigee-cmd/cli2api/internal/runtime"
 	"net/http"
 	"net/http/httptest"
@@ -20,120 +20,57 @@ import (
 	sqlstore "github.com/caigee-cmd/cli2api/internal/store"
 )
 
-type fakeProcess struct {
-	url     string
-	stopped bool
-	done    chan error
+// qoderNativeFixture wires a qoder adapter whose credentials resolve from the
+// live SQLite store, so manager refresh tests exercise the in-process prober
+// path instead of the retired worker transport.
+type qoderNativeFixture struct {
+	manager  *accountruntime.Manager
+	registry *providers.Registry
+	client   *qoder.Client
 }
 
-func (p *fakeProcess) URL() string        { return p.url }
-func (p *fakeProcess) Done() <-chan error { return p.done }
-func (p *fakeProcess) Stop() error {
-	p.stopped = true
-	select {
-	case p.done <- nil:
-	default:
+func newQoderNativeFixture(t *testing.T, ctx context.Context, store *sqlstore.Store, accountID string) *qoderNativeFixture {
+	t.Helper()
+	client := qoder.NewClient(store)
+	client.Bind(func(string) (string, bool) { return "", false }, func() string { return "" })
+	registry := providers.NewRegistry()
+	registry.Register(client.Adapter())
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
+	manager.SetProviders(registry)
+	manager.Pool().Upsert(executor.Item{ID: accountID, Provider: "qoder", Runtime: "in_process"})
+	return &qoderNativeFixture{manager: manager, registry: registry, client: client}
+}
+
+// saveNativeCredential writes a decodable qoder credential for the account.
+func saveNativeCredential(t *testing.T, ctx context.Context, store *sqlstore.Store, accountID, uid string) {
+	t.Helper()
+	if err := store.SaveCredential(ctx, accountID, "native", accounts.NativeCredential{
+		UserBlob:  []byte(`{"access_token":"drt-test","refresh_token":"jrt-test","uid":"` + uid + `","name":"tester","expire_time":1893456000000}`),
+		MachineID: "qoder-machine-id-0123456789",
+	}); err != nil {
+		t.Fatal(err)
 	}
-	return nil
-}
-
-type fakeStarter struct {
-	accounts []accounts.Account
-	homes    []string
-	started  chan *fakeProcess
-	failures int
-
-	setProxyMu sync.Mutex
-	proxyURLs  []string
-}
-
-// SetProxyURL lets fakeStarter satisfy ProxyConfigurableStarter so reload tests
-// can observe whether the manager attempted a reload.
-func (s *fakeStarter) SetProxyURL(value string) {
-	s.setProxyMu.Lock()
-	s.proxyURLs = append(s.proxyURLs, value)
-	s.setProxyMu.Unlock()
-}
-
-func (s *fakeStarter) Start(_ context.Context, account accounts.Account, home string, port int) (accountruntime.ManagedProcess, error) {
-	s.accounts = append(s.accounts, account)
-	s.homes = append(s.homes, home)
-	if s.failures > 0 {
-		s.failures--
-		return nil, errors.New("simulated start failure")
-	}
-	process := &fakeProcess{url: "http://127.0.0.1:" + itoa(port), done: make(chan error, 1)}
-	if s.started != nil {
-		s.started <- process
-	}
-	return process, nil
-}
-
-type delayedStarter struct {
-	mu         sync.Mutex
-	accounts   []accounts.Account
-	started    chan *fakeProcess
-	all        []*fakeProcess
-	delayAfter int
-	delay      time.Duration
-}
-
-func (s *delayedStarter) Start(_ context.Context, account accounts.Account, _ string, port int) (accountruntime.ManagedProcess, error) {
-	s.mu.Lock()
-	s.accounts = append(s.accounts, account)
-	count := len(s.accounts)
-	delay := time.Duration(0)
-	if s.delayAfter > 0 && count > s.delayAfter {
-		delay = s.delay
-	}
-	s.mu.Unlock()
-	if delay > 0 {
-		time.Sleep(delay)
-	}
-	process := &fakeProcess{url: "http://127.0.0.1:" + itoa(port), done: make(chan error, 1)}
-	s.mu.Lock()
-	s.all = append(s.all, process)
-	s.mu.Unlock()
-	if s.started != nil {
-		s.started <- process
-	}
-	return process, nil
-}
-
-func (s *delayedStarter) startCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.accounts)
-}
-
-func (s *delayedStarter) processes() []*fakeProcess {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]*fakeProcess, len(s.all))
-	copy(out, s.all)
-	return out
 }
 
 func TestManagerRefreshesHealthAndPersistsUID(t *testing.T) {
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1", "inFlight": 2,
-		})
-	}))
-	defer worker.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Health", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Health", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
-	if err := manager.RefreshAll(ctx, false); err != nil {
+	if err := store.SaveCredential(ctx, account.ID, "native", accounts.NativeCredential{
+		UserBlob:  []byte(`{"access_token":"drt-test","refresh_token":"jrt-test","uid":"qoder-uid-1","name":"Health","expire_time":1893456000000}`),
+		MachineID: "qoder-machine-id-0123456789",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newQoderNativeFixture(t, ctx, store, account.ID)
+	if err := fixture.manager.RefreshAll(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := store.Get(ctx, account.ID)
@@ -143,8 +80,8 @@ func TestManagerRefreshesHealthAndPersistsUID(t *testing.T) {
 	if updated.RemoteUID != "qoder-uid-1" || updated.Status != "ready" {
 		t.Fatalf("updated account = %+v", updated)
 	}
-	item, _ := manager.Pool().ByID(account.ID)
-	if item.Hot == nil || !*item.Hot || item.InFlight != 2 {
+	item, _ := fixture.manager.Pool().ByID(account.ID)
+	if item.Hot == nil || !*item.Hot {
 		t.Fatalf("pool health = %+v", item)
 	}
 }
@@ -166,7 +103,7 @@ func TestManagerRefreshSkipsDeadRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	restartAt := time.Now().Add(time.Minute)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
@@ -184,53 +121,52 @@ func TestManagerRefreshSkipsDeadRecovery(t *testing.T) {
 }
 
 func TestManagerRefreshFetchesQuotaWithoutAffectingHealth(t *testing.T) {
-	var quotaCalled bool
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1",
-			})
-		case "/admin/quota":
+	quotaCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/quota/usage" {
 			quotaCalled = true
-			if r.Header.Get("Authorization") != "Bearer proxy-key" {
-				t.Errorf("quota request missing worker api key, got %q", r.Header.Get("Authorization"))
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true,
-				"quota": map[string]any{
-					"isQuotaExceeded": false,
-					"fetchedAt":       "2026-08-25T12:00:00Z",
-					"userQuota":       map[string]any{"total": 600, "used": 150, "remaining": 450, "percentage": 25, "unit": "credits"},
-					"addOnQuota":      map[string]any{"total": 100, "used": 40, "remaining": 60, "percentage": 40, "unit": "credits"},
-				},
-			})
-		default:
-			http.NotFound(w, r)
+			_, _ = w.Write([]byte(`{
+				"isQuotaExceeded": false,
+				"fetchedAt": "2026-08-25T12:00:00Z",
+				"userQuota": {"total": 600, "used": 150, "remaining": 450, "percentage": 25, "unit": "credits"},
+				"addOnQuota": {"total": 100, "used": 40, "remaining": 60, "percentage": 40, "unit": "credits"}
+			}`))
+			return
 		}
+		http.NotFound(w, r)
 	}))
-	defer worker.Close()
+	defer upstream.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Quota", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Quota", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyAPIKey: "proxy-key"}, store, &fakeStarter{})
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
-	if err := manager.RefreshAll(ctx, false); err != nil {
+	saveNativeCredential(t, ctx, store, account.ID, "qoder-uid-1")
+	fixture := newQoderNativeFixture(t, ctx, store, account.ID)
+	fixture.client.SetHTTP(upstream.Client())
+	fixture.client.SetEndpoints(map[string]qoder.NativeEndpoints{
+		"cn":     {Base: upstream.URL, Origin: upstream.URL},
+		"global": {Base: upstream.URL, Origin: upstream.URL},
+	})
+	if err := fixture.manager.RefreshAll(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if !quotaCalled {
-		t.Fatal("expected quota endpoint to be called for a hot account")
-	}
-	item, _ := manager.Pool().ByID(account.ID)
-	if item.Quota == nil {
-		t.Fatalf("expected quota snapshot on pool item, got %+v", item)
+	deadline := time.Now().Add(2 * time.Second)
+	var item executor.Item
+	for {
+		item, _ = fixture.manager.Pool().ByID(account.ID)
+		if item.Quota != nil && item.Quota.HasAddOn {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("quota snapshot never arrived: quotaCalled=%v item=%+v", quotaCalled, item)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if item.Quota.Used != 190 || item.Quota.Total != 700 || item.Quota.Unit != "credits" || item.Quota.Exceeded {
 		t.Fatalf("quota snapshot = %+v", item.Quota)
@@ -238,7 +174,7 @@ func TestManagerRefreshFetchesQuotaWithoutAffectingHealth(t *testing.T) {
 	if !item.Quota.HasAddOn || item.Quota.AddOnTotal != 100 || item.Quota.AddOnUsed != 40 {
 		t.Fatalf("quota add-on = %+v", item.Quota)
 	}
-	views, err := manager.Accounts(ctx)
+	views, err := fixture.manager.Accounts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,40 +184,41 @@ func TestManagerRefreshFetchesQuotaWithoutAffectingHealth(t *testing.T) {
 }
 
 func TestManagerRefreshCachesAccountCatalog(t *testing.T) {
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1",
-			})
-		case "/admin/quota":
+		case "/algo/api/v2/model/list":
+			_, _ = w.Write([]byte(`{"chat":[
+				{"key":"hy3","display_name":"HY3","source":"system","enable":true},
+				{"key":"gmodel","display_name":"GLM-5.2","source":"system","enable":true}
+			]}`))
+		case "/api/v2/quota/usage":
 			http.Error(w, "quota unused", http.StatusBadGateway)
-		case "/admin/models":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
-				{"id": "hy3", "mapped_key": "hy3", "display_name": "HY3"},
-				{"id": "glm-5.2", "mapped_key": "gmodel", "display_name": "GLM-5.2"},
-			}})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer worker.Close()
+	defer upstream.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Catalog", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Catalog", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
-	if err := manager.RefreshAll(ctx, false); err != nil {
+	saveNativeCredential(t, ctx, store, account.ID, "qoder-uid-1")
+	fixture := newQoderNativeFixture(t, ctx, store, account.ID)
+	fixture.client.SetHTTP(upstream.Client())
+	fixture.client.SetEndpoints(map[string]qoder.NativeEndpoints{
+		"cn":     {Base: upstream.URL, Origin: upstream.URL},
+		"global": {Base: upstream.URL, Origin: upstream.URL},
+	})
+	if err := fixture.manager.RefreshAll(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	item, _ := manager.Pool().ByID(account.ID)
+	item, _ := fixture.manager.Pool().ByID(account.ID)
 	if !containsModel(item.Models, "hy3") || !containsModel(item.Models, "gmodel") {
 		t.Fatalf("cached models = %#v", item.Models)
 	}
@@ -297,35 +234,38 @@ func containsModel(models []string, want string) bool {
 }
 
 func TestManagerQuotaFailureLeavesAccountReady(t *testing.T) {
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1",
-			})
-		case "/admin/quota":
+		case "/api/v2/quota/usage":
 			http.Error(w, "quota down", http.StatusBadGateway)
+		case "/algo/api/v2/model/list":
+			_, _ = w.Write([]byte(`{"chat":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer worker.Close()
+	defer upstream.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "QuotaDown", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "QuotaDown", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
-	if err := manager.RefreshAll(ctx, false); err != nil {
+	saveNativeCredential(t, ctx, store, account.ID, "qoder-uid-1")
+	fixture := newQoderNativeFixture(t, ctx, store, account.ID)
+	fixture.client.SetHTTP(upstream.Client())
+	fixture.client.SetEndpoints(map[string]qoder.NativeEndpoints{
+		"cn":     {Base: upstream.URL, Origin: upstream.URL},
+		"global": {Base: upstream.URL, Origin: upstream.URL},
+	})
+	if err := fixture.manager.RefreshAll(ctx, false); err != nil {
 		t.Fatalf("quota outage must not fail refresh: %v", err)
 	}
-	item, _ := manager.Pool().ByID(account.ID)
+	item, _ := fixture.manager.Pool().ByID(account.ID)
 	if item.Hot == nil || !*item.Hot {
 		t.Fatalf("account must stay hot on quota outage, got %+v", item)
 	}
@@ -335,125 +275,52 @@ func TestManagerQuotaFailureLeavesAccountReady(t *testing.T) {
 }
 
 func TestManagerRefreshCanForceQuotaBypass(t *testing.T) {
-	var gotQuery string
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1",
-			})
-		case "/admin/quota":
-			gotQuery = r.URL.RawQuery
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok": true,
-				"quota": map[string]any{
-					"userQuota": map[string]any{"total": 10, "used": 1, "remaining": 9, "percentage": 10, "unit": "credits"},
-				},
-			})
+		case "/algo/api/v2/model/list":
+			_, _ = w.Write([]byte(`{"chat":[]}`))
+		case "/api/v2/quota/usage":
+			_, _ = w.Write([]byte(`{
+				"isQuotaExceeded": false,
+				"userQuota": {"total": 10, "used": 1, "remaining": 9, "percentage": 10, "unit": "credits"}
+			}`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer worker.Close()
+	defer upstream.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "ForceQuota", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "ForceQuota", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL})
-	if err := manager.RefreshAll(ctx, true); err != nil {
+	saveNativeCredential(t, ctx, store, account.ID, "qoder-uid-1")
+	fixture := newQoderNativeFixture(t, ctx, store, account.ID)
+	fixture.client.SetHTTP(upstream.Client())
+	fixture.client.SetEndpoints(map[string]qoder.NativeEndpoints{
+		"cn":     {Base: upstream.URL, Origin: upstream.URL},
+		"global": {Base: upstream.URL, Origin: upstream.URL},
+	})
+	if err := fixture.manager.RefreshAll(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if gotQuery != "refresh=1" {
-		t.Fatalf("forced quota refresh query = %q", gotQuery)
+	deadline := time.Now().Add(2 * time.Second)
+	var item executor.Item
+	for {
+		item, _ = fixture.manager.Pool().ByID(account.ID)
+		if item.Quota != nil && item.Quota.Remaining == 9 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("forced refresh must persist a snapshot, got %+v", item.Quota)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-func TestWorkerAdminUsesActionSpecWithoutPathGuessing(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Login", Enabled: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyAPIKey: "secret"}, store, &fakeStarter{})
-	defer manager.Close()
-
-	t.Run("missing account", func(t *testing.T) {
-		_, err := manager.WorkerAdmin(ctx, providers.AdminRequest{AccountID: "missing", Action: "login/device", Method: http.MethodPost})
-		var action *providers.ActionError
-		if !errors.As(err, &action) || action.Code != "account_not_running" {
-			t.Fatalf("err=%v", err)
-		}
-	})
-
-	t.Run("wait timeout", func(t *testing.T) {
-		worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/health" {
-				t.Fatalf("path=%s", r.URL.Path)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hasAuthManager": false})
-		}))
-		defer worker.Close()
-		manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL, Provider: "qoder"})
-		waitCtx, cancel := context.WithTimeout(ctx, 80*time.Millisecond)
-		defer cancel()
-		_, err := manager.WorkerAdmin(waitCtx, providers.AdminRequest{AccountID: account.ID, Action: "login/device", Method: http.MethodPost})
-		var action *providers.ActionError
-		if !errors.As(err, &action) || action.Code != "not_ready" {
-			t.Fatalf("err=%v", err)
-		}
-	})
-
-	t.Run("http failure", func(t *testing.T) {
-		manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1", Provider: "qoder"})
-		_, err := manager.WorkerAdmin(ctx, providers.AdminRequest{AccountID: account.ID, Action: "rewarm", Method: http.MethodPost})
-		var action *providers.ActionError
-		if !errors.As(err, &action) || action.Code != "worker_unavailable" {
-			t.Fatalf("err=%v", err)
-		}
-	})
-
-	t.Run("login incomplete does not sync", func(t *testing.T) {
-		worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/admin/login/status" {
-				t.Fatalf("path=%s", r.URL.Path)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"login": map[string]any{"status": "pending"}})
-		}))
-		defer worker.Close()
-		manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL, Provider: "qoder"})
-		got, err := manager.WorkerAdmin(ctx, providers.AdminRequest{AccountID: account.ID, Action: "login/status", Method: http.MethodGet})
-		if err != nil || got.Status != 200 {
-			t.Fatalf("status=%d err=%v", got.Status, err)
-		}
-	})
-
-	t.Run("login complete syncs credential", func(t *testing.T) {
-		worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/admin/login/status" {
-				t.Fatalf("path=%s", r.URL.Path)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"login": map[string]any{"status": "ok"}})
-		}))
-		defer worker.Close()
-		manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL, Provider: "qoder"})
-		_, err := manager.WorkerAdmin(ctx, providers.AdminRequest{AccountID: account.ID, Action: "login/status", Method: http.MethodGet})
-		var action *providers.ActionError
-		if !errors.As(err, &action) || action.Code != "credential_sync_failed" {
-			t.Fatalf("err=%v", err)
-		}
-	})
 }
 
 func TestManagerPersistsSchedulerCooldown(t *testing.T) {
@@ -467,7 +334,7 @@ func TestManagerPersistsSchedulerCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	manager.Pool().MarkClassified(account.ID, executor.Classified{Kind: accounts.KindRateLimit, Message: "429", Cooldown: time.Minute, Failover: true})
 	// The observer persists asynchronously through a single drainer
@@ -480,14 +347,6 @@ func TestManagerPersistsSchedulerCooldown(t *testing.T) {
 	if updated.LastErrorKind != accounts.KindRateLimit || updated.LastError != "429" || updated.CooldownUntil == nil {
 		t.Fatalf("persisted account = %+v", updated)
 	}
-}
-
-// failingStarter always returns an error, simulating a boot that cannot
-// bring the account's process up.
-type failingStarter struct{}
-
-func (f *failingStarter) Start(_ context.Context, _ accounts.Account, _ string, _ int) (accountruntime.ManagedProcess, error) {
-	return nil, errors.New("start failed")
 }
 
 // P2#1: concurrent MarkClassified calls on one account used to save
@@ -505,7 +364,7 @@ func TestObserverSavesAreSerialized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	// Fire several cooldown updates concurrently; the last one to set
@@ -555,7 +414,7 @@ func TestCloseConcurrentObserverNoPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	stop := make(chan struct{})
 	go func() {
@@ -594,7 +453,7 @@ func TestFlushStrictlyAfterEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	// Enqueue a known cooldown, then flush. The SQLite row must reflect it
@@ -641,7 +500,7 @@ func TestModelLastKindPersistedAcrossRestart(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	manager.TestRestoreCooldowns(ctx)
@@ -669,7 +528,7 @@ func TestStateVersionOrdersAcrossDelayedObserver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 
@@ -734,7 +593,7 @@ func TestPersistQueueBoundedPerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 
@@ -809,7 +668,7 @@ func TestPersistFailureKeepsDirtyEntryAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, failing, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, failing)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 
@@ -866,7 +725,7 @@ func TestCloseDuringPersistentDBFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 
 	// Close the underlying db so writes persistently fail, forcing the
@@ -927,7 +786,7 @@ func TestRestoreModelCooldownDoesNotPolluteAccountBackoff(t *testing.T) {
 	if err := store.SaveCooldowns(ctx, account.ID, rows); err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: "http://127.0.0.1:1"})
 	manager.TestRestoreCooldowns(ctx)
@@ -986,11 +845,11 @@ func TestEnsureModelCatalogsDoesNotBlock(t *testing.T) {
 	}))
 	defer slowC.Close()
 
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
-	manager.Pool().Upsert(executor.Item{ID: "slow-a", URL: slowA.URL, Provider: "qoder", Runtime: "child_process"})
-	manager.Pool().Upsert(executor.Item{ID: "slow-b", URL: slowB.URL, Provider: "qoder", Runtime: "child_process"})
-	manager.Pool().Upsert(executor.Item{ID: "slow-c", URL: slowC.URL, Provider: "qoder", Runtime: "child_process"})
+	manager.Pool().Upsert(executor.Item{ID: "slow-a", URL: slowA.URL, Provider: "qoder", Runtime: "in_process"})
+	manager.Pool().Upsert(executor.Item{ID: "slow-b", URL: slowB.URL, Provider: "qoder", Runtime: "in_process"})
+	manager.Pool().Upsert(executor.Item{ID: "slow-c", URL: slowC.URL, Provider: "qoder", Runtime: "in_process"})
 
 	// With the old serial implementation, this would block ~45s.
 	// With the async fix it returns in milliseconds.
@@ -1081,7 +940,7 @@ func TestCheckinOptedInSkipsSameDaySuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeCheckinMaintainer{msg: "ok"}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	registerCheckinMaintainer(manager, ops)
 	manager.CheckinOptedIn(ctx)
@@ -1109,7 +968,7 @@ func TestScheduledCheckinRespectsConfiguredTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeCheckinMaintainer{msg: "ok"}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	registerCheckinMaintainer(manager, ops)
 	loc := time.FixedZone("CST", 8*3600)
@@ -1138,7 +997,7 @@ func TestScheduledCheckinDoesNotImmediatelyRetrySameTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeCheckinMaintainer{err: errors.New("timeout")}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	registerCheckinMaintainer(manager, ops)
 	now := time.Date(2026, 8, 30, 21, 0, 0, 0, time.FixedZone("CST", 8*3600))
@@ -1167,7 +1026,7 @@ func TestCheckinOptedInRetriesSameDayError(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeCheckinMaintainer{msg: "ok"}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	registerCheckinMaintainer(manager, ops)
 	manager.CheckinOptedIn(ctx)
@@ -1190,7 +1049,7 @@ func TestCheckinAccountRecordsFirstAlreadyThenSkips(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := &fakeCheckinMaintainer{msg: "今天已签到，请明天再来", err: fakeAlreadyCheckedInError{msg: "今天已签到，请明天再来"}}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	defer manager.Close()
 	registerCheckinMaintainer(manager, ops)
 	updated, err := manager.CheckinAccount(ctx, account.ID)

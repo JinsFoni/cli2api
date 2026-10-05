@@ -40,7 +40,7 @@ func (s *stubLogs) Start(entry accounts.RequestLog) {
 }
 
 func TestPrepareRejectsBareModelWhenPoolDisabled(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	_, err := ex.Prepare(PrepareInput{
 		Request: translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
 	})
@@ -51,7 +51,7 @@ func TestPrepareRejectsBareModelWhenPoolDisabled(t *testing.T) {
 }
 
 func TestPrepareStripsPrefixAndChecksGrants(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	got, err := ex.Prepare(PrepareInput{
 		Request: translate.ChatRequest{Model: "workbuddy/glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
 		Identity: auth.KeyIdentity(accounts.APIKey{
@@ -73,7 +73,7 @@ func TestPrepareStripsPrefixAndChecksGrants(t *testing.T) {
 }
 
 func TestPrepareDeniesUngrantedProvider(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	_, err := ex.Prepare(PrepareInput{
 		Request: translate.ChatRequest{Model: "workbuddy/glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
 		Identity: auth.KeyIdentity(accounts.APIKey{
@@ -87,7 +87,7 @@ func TestPrepareDeniesUngrantedProvider(t *testing.T) {
 }
 
 func TestPrepareAppliesQoderContextAndStartsLog(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	contexts := &stubContexts{value: 500000, ok: true}
 	catalogs := &stubCatalogs{}
 	logs := &stubLogs{}
@@ -123,7 +123,7 @@ func TestPrepareAppliesQoderContextAndStartsLog(t *testing.T) {
 }
 
 func TestPrepareNativeResponsesKeepsCompatSeedAndReasoning(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	native, err := translate.ParseNativeResponses([]byte(`{"model":"codex/gpt-5.5","input":[{"role":"user","content":"hi"}],"reasoning":{"effort":"high"},"instructions":"rules"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestPrepareNativeResponsesKeepsCompatSeedAndReasoning(t *testing.T) {
 }
 
 func TestPrepareSkipsNonQoderContextDefaults(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	contexts := &stubContexts{value: 500000, ok: true}
 	got, err := ex.Prepare(PrepareInput{
 		Request:       translate.ChatRequest{Model: "trae/glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
@@ -173,7 +173,7 @@ func TestPrepareSkipsNonQoderContextDefaults(t *testing.T) {
 }
 
 func TestPrepareBareModelEmptyFilterWhenPoolEnabled(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	got, err := ex.Prepare(PrepareInput{
 		Request:           translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
 		CrossProviderPool: true,
@@ -190,7 +190,7 @@ func TestPrepareBareModelEmptyFilterWhenPoolEnabled(t *testing.T) {
 }
 
 func TestPrepareSessionKeyIsolatesByIdentity(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	req := translate.ChatRequest{Model: "qoder/glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}}
 	console, err := ex.Prepare(PrepareInput{Request: req, Identity: auth.ConsoleIdentity()})
 	if err != nil {
@@ -222,7 +222,7 @@ func TestPrepareSessionKeyIsolatesByIdentity(t *testing.T) {
 }
 
 func TestPreparePreservesExplicitContext(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	contexts := &stubContexts{value: 111, ok: true}
 	got, err := ex.Prepare(PrepareInput{
 		Request: translate.ChatRequest{
@@ -274,7 +274,7 @@ func TestProviderPrefixRecognizesCommand(t *testing.T) {
 }
 
 func TestPrepareStripsCommandPrefix(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	got, err := ex.Prepare(PrepareInput{
 		Request:  translate.ChatRequest{Model: "command/deepseek/deepseek-v4-pro", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}},
 		Identity: auth.KeyIdentity(accounts.APIKey{ID: "k", Name: "ci", Providers: []string{"command"}, Enabled: true}),

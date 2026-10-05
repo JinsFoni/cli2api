@@ -22,8 +22,8 @@ func fakeOpenapi(t *testing.T, handler http.HandlerFunc) loginNativeClient {
 		Region:  "global",
 		Entropy: zeroEntropy{},
 		Endpoints: map[string]nativeEndpoints{
-			"global": {base: upstream.URL, origin: upstream.URL},
-			"cn":     {base: upstream.URL, origin: upstream.URL},
+			"global": {Base: upstream.URL, Origin: upstream.URL},
+			"cn":     {Base: upstream.URL, Origin: upstream.URL},
 		},
 	}
 }

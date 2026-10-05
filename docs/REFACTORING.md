@@ -41,7 +41,7 @@ internal/api   测试兼容门面：api.New → app.New。生产 cmd 不走这�
 | 选号 / 冷却 / prepare | `internal/executor` |
 | 账号 CRUD / keys / settings / 登录编排 / 目录聚合 | `internal/control` |
 | 子进程启停 / 恢复 | `internal/runtime` |
-| Qoder HOME / worker 协议 | `internal/providers/qoder` |
+| Qoder HOME / 原生协议 | `internal/providers/qoder` |
 | SQLite / 新表 | `internal/store` 新编号 migration |
 
 ## 剩余生产 import allowlist
@@ -51,7 +51,7 @@ internal/api   测试兼容门面：api.New → app.New。生产 cmd 不走这�
 | 边 | 原因 | 删除条件 |
 |---|---|---|
 | `api` → `app` | 测试门面 | 测试全部迁出 `package api` 后可删门面 |
-| `executor` → `qoder` | chat 仍走 worker HTTP `qoder.NewChatRequest` | 生产 chat 切到 Adapter |
+| `executor` → `qoder` | ~~chat 仍走 worker HTTP~~ 已切换：生产 chat 走 Adapter 原生 COSY 签名直连 | 已完成 |
 | `runtime` → `qoder` | spawn / HOME / quota / catalog 仍直接调 qoder | 剩余能力切到 Adapter |
 
 ## 未宣称完成
@@ -59,7 +59,7 @@ internal/api   测试兼容门面：api.New → app.New。生产 cmd 不走这�
 - 真实账号：Qoder CN L6、WorkBuddy、Trae T5
 - 托管更新 apply；正式发布
 - Restore API；pin 缺失仍回退 pool；Delete 不立刻清 `recovering[]`
-- Qoder quota / login / chat 生产路径仍走 worker HTTP；WorkBuddy / Trae / Devin 走进程内 adapter
+- ~~Qoder quota / login / chat 生产路径仍走 worker HTTP~~（原生路径里程碑已移除 worker：全部 provider 走进程内 adapter）
 
 回滚：无 schema 变化时，用同一 SQLite 启动上一验收二进制；共享分支用 revert，不改写历史。
 

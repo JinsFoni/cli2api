@@ -263,7 +263,7 @@ func TestObserveStreamFailureIgnoresCancellation(test *testing.T) {
 			pool := NewPool(nil, nil)
 			pool.Upsert(Item{ID: "healthy"})
 			before, _ := pool.ByID("healthy")
-			NewChatExecutor(pool, "").ObserveStreamFailure("healthy", failure, "swe-2")
+			NewChatExecutor(pool).ObserveStreamFailure("healthy", failure, "swe-2")
 			after, _ := pool.ByID("healthy")
 			if after.LastKind != "" || !after.DownUntil.IsZero() || len(after.ModelDownUntil) != 0 || after.StateVersion != before.StateVersion {
 				test.Fatalf("cancellation mutated pool state: %+v", after)

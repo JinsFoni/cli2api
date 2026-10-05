@@ -15,7 +15,6 @@ func newProviderTestServer(t *testing.T) *Server {
 	srv := New(config.Config{
 		Host: "127.0.0.1", Port: 3010, ProxyAPIKey: "secret",
 		QoderHome: t.TempDir(), DataDir: t.TempDir(), RuntimeDir: t.TempDir(),
-		WorkerDaemonPath: "/dev/null",
 	})
 	t.Cleanup(func() { _ = srv.Close() })
 	return srv

@@ -156,9 +156,16 @@ func newCompatibilityServer(t *testing.T, worker http.HandlerFunc) (*Server, fun
 	t.Helper()
 	upstream := httptest.NewServer(worker)
 	pool := executor.NewPool(nil, nil)
-	pool.Upsert(executor.Item{ID: "account-a", URL: upstream.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	chatExecutor := executor.NewChatExecutor(pool, "")
+	pool.Upsert(executor.Item{ID: "account-a", URL: upstream.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	chatExecutor := executor.NewChatExecutor(pool)
 	chatExecutor.HTTPClient = upstream.Client()
+	chatExecutor.Providers = providers.NewRegistry()
+	chatExecutor.Providers.Register(providers.Adapter{ID: "qoder", Chat: newFakeChatViaHTTP(upstream.Client(), func(accountID string) string {
+		if item, ok := pool.ByID(accountID); ok {
+			return item.URL
+		}
+		return ""
+	})})
 	server := &Server{App: &app.App{Executor: chatExecutor, Pool: pool}}
 	return server, upstream.Close
 }

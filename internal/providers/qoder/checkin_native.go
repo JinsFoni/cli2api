@@ -19,13 +19,24 @@ import (
 // credential verdict used when no worker is running.
 
 type nativeEndpoints struct {
-	base   string
-	origin string
+	Base   string
+	Origin string
+}
+
+// NativeEndpoints is the exported view of a region's openapi host pair, used
+// by the runtime test harness to point native calls at a fake upstream.
+type NativeEndpoints = nativeEndpoints
+
+// SetEndpoints installs non-production openapi hosts for every native
+// control-plane call (quota, check-in, catalog, refresh). Runtime tests use
+// it to route the in-process client at a fake upstream.
+func (c *Client) SetEndpoints(endpoints map[string]NativeEndpoints) {
+	c.setEndpoints(endpoints)
 }
 
 var nativeRegionEndpoints = map[string]nativeEndpoints{
-	"cn":     {base: "https://openapi.qoder.com.cn", origin: "https://qoder.com" + ".cn"},
-	"global": {base: "https://openapi.qoder.sh", origin: "https://qoder.com"},
+	"cn":     {Base: "https://openapi.qoder.com.cn", Origin: "https://qoder.com" + ".cn"},
+	"global": {Base: "https://openapi.qoder.sh", Origin: "https://qoder.com"},
 }
 
 func nativeEndpoint(region string) (nativeEndpoints, bool) {
@@ -124,8 +135,8 @@ func checkinHeaders(token, machineID string, endpoint nativeEndpoints) map[strin
 		"User-Agent":      "Qoder",
 		"Cosy-ClientType": "10",
 		"Cosy-Version":    "0.3.4",
-		"Origin":          endpoint.origin,
-		"Referer":         endpoint.base + "/growth-page/activity-iframe",
+		"Origin":          endpoint.Origin,
+		"Referer":         endpoint.Base + "/growth-page/activity-iframe",
 	}
 	for key, value := range checkinMachineHeaders(machineID) {
 		headers[key] = value
@@ -186,7 +197,7 @@ func (c *Client) refreshAccessToken(ctx context.Context, httpClient *http.Client
 		return userBlob{}, errors.New("refresh token is not renewable (unknown prefix); re-login required")
 	}
 	body, _ := json.Marshal(map[string]string{"refresh_token": cred.RefreshToken})
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.base+path, strings.NewReader(string(body)))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.Base+path, strings.NewReader(string(body)))
 	if err != nil {
 		return userBlob{}, err
 	}
@@ -402,7 +413,7 @@ func trimFloat(value float64) string {
 }
 
 func (c *Client) nativeRequest(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, method, path, token, machineID string) ([]byte, int, error) {
-	request, err := http.NewRequestWithContext(ctx, method, endpoint.base+path, nil)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.Base+path, nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -480,7 +491,7 @@ func (c *Client) fetchNativeQuota(ctx context.Context, httpClient *http.Client, 
 }
 
 func (c *Client) nativeQuotaRequest(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, token, machineID string) ([]byte, int, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.base+"/api/v2/quota/usage", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.Base+"/api/v2/quota/usage", nil)
 	if err != nil {
 		return nil, 0, err
 	}

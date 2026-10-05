@@ -69,8 +69,12 @@ func TestChatNonStreamFailoversRateLimit(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool([]string{a.URL, b.URL}, []string{"a", "b"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = a.Client()
+	bridge := newFakeChatViaHTTP(a.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	got, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "qwen3.7-plus",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -110,11 +114,15 @@ func TestChatNonStreamDoesNotFailoverAcrossQoderRegions(t *testing.T) {
 	defer cn.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "g1", URL: globalA.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "g2", URL: globalB.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "c1", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "child_process"})
-	ex := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "g1", URL: globalA.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "g2", URL: globalB.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "c1", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "in_process"})
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = globalA.Client()
+	bridge := newFakeChatViaHTTP(globalA.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	got, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "", "qoder")
@@ -149,10 +157,14 @@ func TestChatNonStreamPinnedCNDoesNotEscapeToGlobal(t *testing.T) {
 	defer global.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "c1", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "g1", URL: global.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	ex := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "c1", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "g1", URL: global.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = cn.Client()
+	bridge := newFakeChatViaHTTP(cn.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "c1", "qoder")
@@ -176,12 +188,16 @@ func TestChatNonStreamRoutesByAccountCatalog(t *testing.T) {
 	defer hasModel.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: missing.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: hasModel.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "a", URL: missing.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: hasModel.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
 	pool.MergeModels("a", []string{"glm-5.2"})
 	pool.MergeModels("b", []string{"hy3"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = hasModel.Client()
+	bridge := newFakeChatViaHTTP(hasModel.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	got, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model: "hy3", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "", "qoder")
@@ -200,8 +216,12 @@ func TestChatNonStreamUnknownModelDoesNotHitWorkers(t *testing.T) {
 	defer srv.Close()
 	pool := NewPool([]string{srv.URL}, []string{"a"})
 	pool.MergeModels("a", []string{"glm-5.2"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = srv.Client()
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model: "hy3", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "", "qoder")
@@ -227,8 +247,12 @@ func TestChatNonStreamPromptLimitDoesNotCoolOrFailover(t *testing.T) {
 	}))
 	defer b.Close()
 	pool := NewPool([]string{a.URL, b.URL}, []string{"a", "b"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = a.Client()
+	bridge := newFakeChatViaHTTP(a.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "qwen3.7-plus",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -255,8 +279,12 @@ func TestChatNonStreamHardQuotaCoolsAccount(t *testing.T) {
 	}))
 	defer b.Close()
 	pool := NewPool([]string{a.URL, b.URL}, []string{"a", "b"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = a.Client()
+	bridge := newFakeChatViaHTTP(a.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "qwen3.7-plus",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -282,9 +310,13 @@ func TestChatNonStreamForwardsPinnedAccount(t *testing.T) {
 		io.WriteString(w, `{"choices":[{"message":{"content":"OK"},"finish_reason":"stop"}],"usage":{"source":"upstream"}}`)
 	}))
 	defer srv.Close()
-	pool := NewPool([]string{srv.URL}, []string{"default"})
-	ex := NewChatExecutor(pool, "")
+	pool := NewPool([]string{srv.URL}, []string{"acc2"})
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = srv.Client()
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	got, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "acc2", "")
@@ -297,19 +329,12 @@ func TestChatNonStreamForwardsPinnedAccount(t *testing.T) {
 }
 
 func TestChatNonStreamFailsWhenSQLitePoolIsEmpty(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "")
+	ex := NewChatExecutor(NewPool(nil, nil))
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "", "")
 	if err == nil || !strings.Contains(err.Error(), "no worker accounts") {
 		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestNewChatExecutorUsesProxyKeyForInternalDaemon(t *testing.T) {
-	ex := NewChatExecutor(NewPool(nil, nil), "shared-secret")
-	if ex.WorkerKey != "shared-secret" {
-		t.Fatalf("worker key = %q", ex.WorkerKey)
 	}
 }
 
@@ -322,7 +347,7 @@ func TestChatNonStreamAllSaturatedReturnsRateLimit(t *testing.T) {
 	pool.Upsert(Item{ID: "b", URL: "http://127.0.0.1:2", MaxInFlight: 1})
 	pool.MergeHealth("a", true, false, 1, 0, "")
 	pool.MergeHealth("b", true, false, 1, 0, "")
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model: "glm-5.3", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "", "")
@@ -346,14 +371,18 @@ func TestChatNonStreamSuccessScopedByModelLeavesOtherModelCooled(t *testing.T) {
 	}))
 	defer srv.Close()
 	pool := NewPool([]string{srv.URL}, []string{"a"})
-	pool.Upsert(Item{ID: "a", URL: srv.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "a", URL: srv.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
 	// model-A is rate-limited for an hour.
 	pool.MarkClassified("a", Classified{
 		Kind: accounts.KindRateLimit, Cooldown: time.Hour,
 		Failover: true, Model: "glm-5.3", Message: "429",
 	})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = srv.Client()
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	if _, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model: "deepseek-v4-flash", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
 	}, "a", ""); err != nil {
@@ -377,7 +406,11 @@ func TestChatNonStreamCancellationDoesNotFailoverOrCooldown(t *testing.T) {
 	defer srv.Close()
 
 	pool := NewPool([]string{srv.URL, srv.URL}, []string{"a", "b"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := ex.ChatNonStream(ctx, translate.ChatRequest{
@@ -411,9 +444,15 @@ func TestChatStreamProxyDoesNotUseClientTotalTimeout(t *testing.T) {
 	defer srv.Close()
 
 	pool := NewPool([]string{srv.URL}, []string{"a"})
-	ex := NewChatExecutor(pool, "")
-	ex.HTTPClient = srv.Client()
-	ex.HTTPClient.Timeout = 10 * time.Millisecond
+	ex := NewChatExecutor(pool)
+	clientWithTotalTimeout := &http.Client{Timeout: 10 * time.Millisecond}
+	ex.HTTPClient = clientWithTotalTimeout
+	// Streams bypass the total-timeout client: the executor historically
+	// strips Timeout for streaming, and the bridge mirrors that.
+	bridge := newFakeChatViaHTTP(&http.Client{})
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 
 	stream, err := ex.ChatStreamProxy(context.Background(), translate.ChatRequest{
 		Model:    "minimax-m3",
@@ -438,7 +477,7 @@ func TestChatStreamProxyDoesNotUseClientTotalTimeout(t *testing.T) {
 func TestObserveStreamFailureCoolsDownQuotaAccount(t *testing.T) {
 	pool := NewPool([]string{"http://127.0.0.1:1"}, []string{"acc-quota"})
 	pool.Upsert(Item{ID: "acc-quota"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 
 	ex.ObserveStreamFailure("acc-quota", &providers.Error{
 		Kind:    accounts.KindQuota,
@@ -478,8 +517,12 @@ func TestChatNonStreamDoesNotDispatchWhileAccountCooling(t *testing.T) {
 		Kind: accounts.KindRateLimit, Cooldown: time.Hour, Failover: true,
 		Model: "glm-5.3", Message: "model rate limited",
 	})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = srv.Client()
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "glm-5.3",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -511,14 +554,18 @@ func TestChatNonStreamUsesProvenAccountOverQuotaCatalog(t *testing.T) {
 	defer srv.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "quota", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "ready", URL: srv.URL, Provider: "workbuddy", Region: "cn", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "quota", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "ready", URL: srv.URL, Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
 	pool.MarkClassified("quota", Classified{Kind: accounts.KindQuota, Cooldown: time.Hour, Message: "额度已用尽"})
 	pool.MarkOK("ready", "deepseek-v4-flash")
 	pool.MergeModels("ready", []string{"glm-5.2"})
 
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.HTTPClient = srv.Client()
+	bridge := newFakeChatViaHTTP(srv.Client())
+	bridge.pool = pool
+	ex.Providers = providers.NewRegistry()
+	ex.Providers.Register(providers.Adapter{ID: "workbuddy", Chat: bridge})
 	got, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "deepseek-v4-flash",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -534,14 +581,14 @@ func TestChatNonStreamUsesProvenAccountOverQuotaCatalog(t *testing.T) {
 func TestChatNonStreamExpiredQuotaDoesNotMaskModelRateLimit(t *testing.T) {
 	pool := NewPool(nil, nil)
 	pool.Upsert(Item{
-		ID: "a", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "child_process",
+		ID: "a", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "in_process",
 		DownUntil: time.Now().Add(-time.Minute), LastKind: accounts.KindQuota,
 	})
 	pool.MarkClassified("a", Classified{
 		Kind: accounts.KindRateLimit, Cooldown: time.Hour, Failover: true,
 		Model: "deepseek-v4-flash", Message: "too many requests",
 	})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "deepseek-v4-flash",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -560,9 +607,9 @@ func TestChatNonStreamExpiredQuotaDoesNotMaskModelRateLimit(t *testing.T) {
 
 func TestChatNonStreamQuotaCoolingIsQuotaNotRateLimit(t *testing.T) {
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "quota", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "quota", URL: "http://127.0.0.1:1", Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
 	pool.MarkClassified("quota", Classified{Kind: accounts.KindQuota, Cooldown: time.Hour, Message: "额度已用尽"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	_, err := ex.ChatNonStream(context.Background(), translate.ChatRequest{
 		Model:    "deepseek-v4-flash",
 		Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}},
@@ -581,7 +628,7 @@ func TestChatNonStreamQuotaCoolingIsQuotaNotRateLimit(t *testing.T) {
 
 func TestObserveStreamFailureDropsProvenModel(t *testing.T) {
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "ready", Provider: "workbuddy", Region: "cn", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "ready", Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
 	pool.MarkOK("ready", "deepseek-v4-flash")
 	pool.MergeModels("ready", []string{"glm-5.2"})
 	item, ok := pool.ByID("ready")
@@ -589,7 +636,7 @@ func TestObserveStreamFailureDropsProvenModel(t *testing.T) {
 		t.Fatalf("expected proven model before stream failure, got %+v", item)
 	}
 
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.ObserveStreamFailure("ready", &providers.Error{
 		Kind:    accounts.KindModelNotAvailable,
 		Status:  400,
@@ -610,10 +657,10 @@ func TestObserveStreamFailureDropsProvenModel(t *testing.T) {
 
 func TestObserveStreamCatalogUnavailablePreservesModel(t *testing.T) {
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "ready", Provider: "workbuddy", Region: "cn", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "ready", Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
 	pool.MergeModels("ready", []string{"deepseek-v4-flash"})
 
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.ObserveStreamFailure("ready", &providers.Error{
 		Kind:    accounts.KindModelNotAvailable,
 		Status:  503,
@@ -636,7 +683,7 @@ func TestObserveStreamCatalogUnavailablePreservesModel(t *testing.T) {
 func TestObserveStreamFailureWithoutModelTakesAccountDown(t *testing.T) {
 	pool := NewPool([]string{"http://127.0.0.1:1"}, []string{"acc-quota"})
 	pool.Upsert(Item{ID: "acc-quota"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 
 	ex.ObserveStreamFailure("acc-quota", &providers.Error{
 		Kind:    accounts.KindQuota,
@@ -658,8 +705,8 @@ func TestObserveStreamFailureWithoutModelTakesAccountDown(t *testing.T) {
 // it — the account/model would be retried immediately after a stream failure.
 func TestObserveStreamFailureUsesStrippedModel(t *testing.T) {
 	pool := NewPool([]string{"http://127.0.0.1:1"}, []string{"a"})
-	pool.Upsert(Item{ID: "a", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	ex := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	ex := NewChatExecutor(pool)
 
 	// Simulate the chat handler passing the bare model (req.Model after
 	// resolveProviderFilter), not the prefixed publicModel.
@@ -707,7 +754,7 @@ func TestObserveStreamFailureUsesStrippedModel(t *testing.T) {
 func TestObserveStreamFailureLeavesHealthyAccountAlone(t *testing.T) {
 	pool := NewPool([]string{"http://127.0.0.1:1"}, []string{"acc-ok"})
 	pool.Upsert(Item{ID: "acc-ok"})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 
 	// The request body was rejected; retrying elsewhere cannot help and the
 	// account is not at fault, so it must stay schedulable.
@@ -729,9 +776,9 @@ func TestObserveStreamFailureLeavesHealthyAccountAlone(t *testing.T) {
 func TestAttemptsForHonorsRetryBudget(t *testing.T) {
 	pool := NewPool(nil, nil)
 	for i := 0; i < 8; i++ {
-		pool.Upsert(Item{ID: fmt.Sprintf("a%d", i), Provider: "qoder", Region: "global", Runtime: "child_process"})
+		pool.Upsert(Item{ID: fmt.Sprintf("a%d", i), Provider: "qoder", Region: "global", Runtime: "in_process"})
 	}
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.MaxAttempts = 3
 	if got := ex.attemptsFor("qoder", "global", "", nil, nil); got != 3 {
 		t.Fatalf("attempt budget = %d", got)

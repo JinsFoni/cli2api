@@ -8,8 +8,7 @@ import (
 type RuntimeKind string
 
 const (
-	RuntimeChildProcess RuntimeKind = "child_process"
-	RuntimeInProcess    RuntimeKind = "in_process"
+	RuntimeInProcess RuntimeKind = "in_process"
 )
 
 type AuthType string

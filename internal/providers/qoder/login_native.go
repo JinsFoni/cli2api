@@ -125,7 +125,7 @@ func (l loginNativeClient) ExchangePAT(ctx context.Context, pat string) (exchang
 	if err != nil {
 		return exchangedToken{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.base+"/api/v1/jobToken/exchange", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.Base+"/api/v1/jobToken/exchange", strings.NewReader(string(body)))
 	if err != nil {
 		return exchangedToken{}, err
 	}
@@ -208,7 +208,7 @@ func (l loginNativeClient) fetchUserInfo(ctx context.Context, token string) (uid
 	if !ok {
 		return "", "", fmt.Errorf("qoder region %q has no openapi endpoint", l.Region)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.base+"/api/v1/userinfo", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.Base+"/api/v1/userinfo", nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -328,7 +328,7 @@ func encodeUserBlobFull(blob userBlob, fields runtimeFields, pat string, refresh
 // DebugEndpointFor exposes the resolved region host for diagnostics.
 func (l loginNativeClient) DebugEndpointFor() (string, bool) {
 	e, ok := l.endpointFor()
-	return e.base, ok
+	return e.Base, ok
 }
 
 // DebugLoginNativeClient exposes the native login client for diagnostics.
@@ -339,7 +339,7 @@ func (c *Client) DebugLoginNativeClient(ctx context.Context, accountID string) l
 // EndpointForPublic reports the resolved openapi host.
 func (l loginNativeClient) EndpointForPublic() (string, bool) {
 	e, ok := l.endpointFor()
-	return e.base, ok
+	return e.Base, ok
 }
 
 // DebugHTTPClient exposes the native HTTP client for diagnostics.

@@ -2,7 +2,8 @@
 //
 // This is the Task 8 recording harness (docs/private/plans/2026-10-01-qoder-native-path.md).
 // It boots the pinned qodercli bundle with the same rewrite-loader hooks the
-// worker uses, waits for the hot WASM context, then:
+// recording harness uses (scripts/record-compat.mjs), waits for the hot WASM
+// context, then:
 //   1. records prepareInferRequest output (URL / headers / encoded body) for a
 //      fixed set of inputs;
 //   2. optionally sends one real chat request and captures the raw upstream
@@ -24,7 +25,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { register } from "node:module";
-import { patchQodercliSource, readQodercliVersion, NEEDLES, PINNED_QODERCLI_VERSION } from "../worker/src/compat.mjs";
+import { patchQodercliSource, readQodercliVersion, NEEDLES, PINNED_QODERCLI_VERSION } from "./record-compat.mjs";
 
 const args = process.argv.slice(2);
 function argValue(name) {
@@ -54,13 +55,11 @@ if (!pat) {
 }
 
 // ---------------------------------------------------------------------------
-// bundle resolution + patching (same mechanism as worker/src/daemon.mjs)
+// bundle resolution + patching (same mechanism as scripts/record-compat.mjs)
 // ---------------------------------------------------------------------------
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cliCandidates = [
-  path.join(__dirname, "../worker/node_modules/@qodercn-ai/qoderclicn/bundle/qoderclicn.js"),
-  path.join(__dirname, "../worker/node_modules/@qoder-ai/qodercli/bundle/qodercli.js"),
   "/usr/local/lib/node_modules/@qodercn-ai/qoderclicn/bundle/qoderclicn.js",
   "/usr/local/lib/node_modules/@qoder-ai/qodercli/bundle/qodercli.js",
 ];
@@ -72,7 +71,7 @@ if (!cliPath || !fs.existsSync(cliPath)) {
 
 // Inline loader: patch the bundle in-memory exactly like worker rewrite-loader.
 const loaderSource = `
-import { patchQodercliSource, readQodercliVersion } from ${JSON.stringify(pathToFileURL(path.join(__dirname, "../worker/src/compat.mjs")).href)};
+import { patchQodercliSource, readQodercliVersion } from ${JSON.stringify(pathToFileURL(path.join(__dirname, "record-compat.mjs")).href)};
 export async function load(url, context, nextLoad) {
   const result = await nextLoad(url, context);
   const file = decodeURIComponent(url.split(/[?#]/)[0].split("/").pop() || "");

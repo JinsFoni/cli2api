@@ -81,8 +81,8 @@ func TestCatalogNativeSignedRequest(t *testing.T) {
 		Region:   "cn",
 		Identity: inferTestIdentity("cn"),
 		Endpoints: map[string]nativeEndpoints{
-			"cn":     {base: upstream.URL, origin: upstream.URL},
-			"global": {base: upstream.URL, origin: upstream.URL},
+			"cn":     {Base: upstream.URL, Origin: upstream.URL},
+			"global": {Base: upstream.URL, Origin: upstream.URL},
 		},
 	}
 	entries, err := cc.fetchCatalogRaw(context.Background())

@@ -172,19 +172,22 @@ func TestAccountsAdminDispatchesInProcessLoginWithoutWorkerPath(t *testing.T) {
 	_ = runtime
 }
 
-func TestAccountsAdminForwardsQoderLoginToWorker(t *testing.T) {
+func TestAccountsAdminQoderLoginGoesNative(t *testing.T) {
 	svc, runtime, store, log := newTestServices()
 	store.accounts["acc-1"] = accounts.Account{ID: "acc-1", Provider: "qoder"}
-	result, err := svc.Accounts.Admin(context.Background(), AccountAdminAction{
+	_, err := svc.Accounts.Admin(context.Background(), AccountAdminAction{
 		AccountID: "acc-1", Action: "login/device", Method: "POST",
 	})
-	if err != nil || result.Kind != "worker" {
-		t.Fatalf("result=%+v err=%v", result, err)
+	// Qoder device login is retired; without a login adapter the request fails
+	// before any runtime transport is touched (no worker admin, no start).
+	if err == nil {
+		t.Fatalf("qoder login/device should fail without a login provider, got nil")
 	}
-	if runtime.adminReq.Action != "login/device" || runtime.adminReq.Method != "POST" {
-		t.Fatalf("control must pass the action name, not a worker path: %+v", runtime.adminReq)
+	if runtime.adminReq.Action != "" {
+		t.Fatalf("qoder login must not reach runtime.WorkerAdmin: %+v", runtime.adminReq)
 	}
-	if got := log.names; !equalCalls(got, []string{"store.Get", "runtime.WorkerAdmin"}) {
+	// One lookup in Admin, one inside StartLogin's adapter resolution.
+	if got := log.names; !equalCalls(got, []string{"store.Get", "store.Get"}) {
 		t.Fatalf("calls=%v", got)
 	}
 }

@@ -102,14 +102,10 @@ func (c *Client) SetLoginWait(timeout, interval time.Duration) {
 }
 
 func (c *Client) Adapter() providers.Adapter {
-	// Check-in and quota are native now (direct Bearer HTTP + stored
-	// credential), so the Prober slot is safe to register: refreshInProcess
-	// only routes items that already sit in the pool, and Probe defers to the
-	// running worker's health for anything chat-routable. Probe for qoder
-	// never fabricates model availability, and fetchProviderModels skips
-	// qoder outright, so a credential-only ready item cannot join a model
-	// route with an empty URL: routeBaseMatches still requires a catalog or
-	// proven model hit for the concrete request.
+	// Check-in, quota, models, and readiness are all native now (direct
+	// Bearer/COSY HTTP + stored credential). Probe for qoder never fabricates
+	// model availability: routeBaseMatches still requires a catalog or proven
+	// model hit for the concrete request.
 	return providers.Adapter{
 		ID:      "qoder",
 		Login:   c,
@@ -118,21 +114,6 @@ func (c *Client) Adapter() providers.Adapter {
 		Prober:  c,
 		Checkin: c,
 	}
-}
-
-func (c *Client) lookup(accountID string) (string, error) {
-	c.mu.RLock()
-	locate := c.locate
-	c.mu.RUnlock()
-	if locate == nil {
-		return "", ErrAccountNotRunning
-	}
-	workerURL, ok := locate(accountID)
-	workerURL = strings.TrimRight(strings.TrimSpace(workerURL), "/")
-	if !ok || workerURL == "" {
-		return "", ErrAccountNotRunning
-	}
-	return workerURL, nil
 }
 
 func (c *Client) key() string {
@@ -145,35 +126,7 @@ func (c *Client) key() string {
 	return fn()
 }
 
-func (c *Client) worker(httpClient *http.Client) WorkerClient {
-	return WorkerClient{HTTP: httpClient, ProxyAPIKey: c.key()}
-}
-
-func (c *Client) accountWorker(httpClient *http.Client, accountID string) WorkerClient {
-	return WorkerClient{HTTP: httpClient, ProxyAPIKey: c.key(), AccountID: accountID}
-}
-
 func (c *Client) Models(ctx context.Context, accountID string) ([]providers.ModelInfo, error) {
-	// Native path: signed GET against the per-region model catalog. The
-	// worker /admin/models fallback remains reachable only when the account
-	// still carries a process URL (migration window).
-	if workerURL, err := c.lookup(accountID); err == nil && workerURL != "" {
-		c.mu.RLock()
-		httpClient := c.modelsHTTP
-		c.mu.RUnlock()
-		entries, status, rawBody, err := c.worker(httpClient).Models(ctx, workerURL, false)
-		if err != nil {
-			return nil, err
-		}
-		if status >= 300 {
-			snippet := strings.TrimSpace(rawBody)
-			if len(snippet) > 512 {
-				snippet = snippet[:512]
-			}
-			return nil, HTTPStatusError{Op: "models", Status: status, Body: snippet}
-		}
-		return ModelInfos(entries), nil
-	}
 	return c.FetchModelsNative(ctx, accountID)
 }
 
@@ -222,10 +175,32 @@ func intSliceField(entry map[string]any, key string) ([]int, bool) {
 	return out, len(out) > 0
 }
 
+// largestContextWindow is the largest selectable window, when Qoder
+// advertises more than the default (`available_context_windows`).
+func largestContextWindow(entry map[string]any) (int, bool) {
+	windows, ok := intSliceField(entry, "available_context_windows")
+	if !ok {
+		return 0, false
+	}
+	largest := 0
+	for _, window := range windows {
+		if window > largest {
+			largest = window
+		}
+	}
+	if largest <= 0 {
+		return 0, false
+	}
+	return largest, true
+}
+
 // contextWindowDefault is the model's default context window: Qoder's
 // `default_context_window` when present, else the legacy `context_length`.
 func contextWindowDefault(entry map[string]any) int {
-	if window, ok := qoderDefaultContextWindow(entry); ok {
+	if window, ok := numberFieldValue(entry, "default_context_window"); ok && window > 0 {
+		return window
+	}
+	if window, ok := numberFieldValue(entry, "context_length"); ok && window > 0 {
 		return window
 	}
 	return 0
@@ -255,7 +230,7 @@ func ModelInfos(entries []map[string]any) []providers.ModelInfo {
 				Images:        true,
 			},
 		}
-		if maxWindow, ok := qoderLargestContextWindow(entry); ok {
+		if maxWindow, ok := largestContextWindow(entry); ok {
 			if maxWindow > info.Capabilities.ContextWindow {
 				info.Capabilities.ContextWindowMax = maxWindow
 			}
@@ -357,33 +332,6 @@ func CatalogIDsFromInfos(models []providers.ModelInfo) []string {
 }
 
 func (c *Client) Probe(ctx context.Context, accountID string) (providers.AccountHealth, error) {
-	c.mu.RLock()
-	healthHTTP := c.healthHTTP
-	locate := c.locate
-	c.mu.RUnlock()
-	// Legacy worker fallback (pre-native accounts still served by a child
-	// process): a running worker remains the authority there. Native accounts
-	// never appear in the process table, so the locate miss falls through to
-	// the credential verdict below.
-	if locate != nil {
-		if workerURL, found := locate(accountID); found {
-			workerURL = strings.TrimRight(strings.TrimSpace(workerURL), "/")
-			if workerURL != "" {
-				health, status, err := WorkerClient{HTTP: healthHTTP}.Health(ctx, workerURL)
-				if err != nil {
-					return providers.AccountHealth{LastError: err.Error()}, nil
-				}
-				ready := status < 300 && health.OK && health.Ready
-				return providers.AccountHealth{
-					Ready:     ready,
-					Hot:       health.Hot,
-					UID:       health.UID,
-					InFlight:  health.InFlight,
-					LastError: health.LastError,
-				}, nil
-			}
-		}
-	}
 	// Native readiness: the credential must decode and the chat identity
 	// (runtime fields, COSY pair) must assemble. Model routing still requires
 	// a catalog hit, so this never fabricates model availability.
@@ -414,29 +362,7 @@ func (c *Client) Quota(ctx context.Context, accountID string) (*providers.QuotaI
 }
 
 func (c *Client) QuotaSnapshot(ctx context.Context, accountID string, force bool) (*accounts.QuotaSnapshot, error) {
-	snapshot, err := c.nativeQuotaSnapshot(ctx, accountID)
-	if err == nil {
-		return snapshot, nil
-	}
-	// Worker fallback is reachable only when the native path is structurally
-	// unavailable (no store binding, unreadable credential, unmapped region).
-	// A native attempt that itself failed (transport, upstream status, shape)
-	// surfaces: the worker would call the same upstream, so a second
-	// round-trip would only mask drift.
-	if !errors.Is(err, errNativeUnavailable) {
-		return nil, err
-	}
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.RLock()
-	httpClient := c.quotaHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
-	return c.worker(httpClient).Quota(ctx, workerURL, force)
+	return c.nativeQuotaSnapshot(ctx, accountID)
 }
 
 // errNativeUnavailable marks structural reasons the in-process quota path
@@ -465,61 +391,15 @@ func (c *Client) nativeQuotaSnapshot(ctx context.Context, accountID string) (*ac
 	return quota.snapshot(), nil
 }
 
+// StartLogin starts the native device-code login flow for an account. The
+// device flow (worker-era) is retired; PAT login is the supported path, but
+// StartLogin/PollLogin remain for providers.Login interface completeness.
 func (c *Client) StartLogin(ctx context.Context, accountID string) (providers.LoginSession, error) {
-	c.mu.RLock()
-	timeout := c.loginTimeout
-	interval := c.loginInterval
-	adminHTTP := c.adminHTTP
-	locate := c.locate
-	c.mu.RUnlock()
-	workerURL, err := WaitForAuthManager(ctx, func() (string, bool) {
-		if locate == nil {
-			return "", false
-		}
-		return locate(accountID)
-	}, timeout, interval)
-	if err != nil {
-		return providers.LoginSession{}, err
-	}
-	status, _, body, err := c.accountWorker(adminHTTP, accountID).Admin(ctx, workerURL, http.MethodPost, "/admin/login/device", "", nil)
-	if err != nil {
-		return providers.LoginSession{}, err
-	}
-	if status >= 300 {
-		return providers.LoginSession{}, HTTPStatusError{Op: "login", Status: status, Body: strings.TrimSpace(string(body))}
-	}
-	var parsed struct {
-		AuthURL string `json:"authUrl"`
-	}
-	_ = json.Unmarshal(body, &parsed)
-	return providers.LoginSession{AuthURL: parsed.AuthURL}, nil
+	return providers.LoginSession{}, fmt.Errorf("qoder device login is retired; use PAT login")
 }
 
 func (c *Client) PollLogin(ctx context.Context, accountID string) (bool, string, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return false, "", err
-	}
-	c.mu.RLock()
-	adminHTTP := c.adminHTTP
-	c.mu.RUnlock()
-	status, _, body, err := c.accountWorker(adminHTTP, accountID).Admin(ctx, workerURL, http.MethodGet, "/admin/login/status", "", nil)
-	if err != nil {
-		return false, "", err
-	}
-	if status >= 300 {
-		return false, "", HTTPStatusError{Op: "login", Status: status, Body: strings.TrimSpace(string(body))}
-	}
-	var parsed struct {
-		Login struct {
-			Status  string `json:"status"`
-			Message string `json:"message"`
-		} `json:"login"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false, "", err
-	}
-	return parsed.Login.Status == "ok", parsed.Login.Message, nil
+	return false, "", fmt.Errorf("qoder device login is retired; use PAT login")
 }
 
 func BuildChatPayload(req translate.ChatRequest, stream bool) map[string]any {

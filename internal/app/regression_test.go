@@ -12,10 +12,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"bytes"
+
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/app"
 	"github.com/caigee-cmd/cli2api/internal/config"
 	"github.com/caigee-cmd/cli2api/internal/executor"
+	"github.com/caigee-cmd/cli2api/internal/providers"
+	"github.com/caigee-cmd/cli2api/internal/translate"
 	"github.com/caigee-cmd/cli2api/internal/update"
 )
 
@@ -35,7 +39,7 @@ func serveRegression(h http.Handler, method, path, key, body string) *httptest.R
 	return w
 }
 
-func TestConsoleKeyRotationUpdatesExistingHandlerAndWorkerRequests(t *testing.T) {
+func TestConsoleKeyRotationUpdatesExistingHandlerAndUpstreamRequests(t *testing.T) {
 	a := regressionApp(t)
 	// Capture the production handler once, exactly as http.Server does.
 	h := a.Handler()
@@ -79,19 +83,11 @@ func TestConsoleKeyRotationUpdatesExistingHandlerAndWorkerRequests(t *testing.T)
 		}
 		currentKey = result.Secret
 	}
-	// A fake ready worker uses the runtime's current key, without spawning a CLI.
+	// A fake ready qoder account answers through the executor's in-process
+	// adapter slot, backed by an OpenAI-speaking httptest upstream.
 	var calls atomic.Int32
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			http.NotFound(w, r)
-			return
-		}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+currentKey {
-			t.Error("worker received stale key")
-			w.WriteHeader(401)
-			return
-		}
 		var req struct {
 			Stream bool `json:"stream"`
 		}
@@ -103,13 +99,18 @@ func TestConsoleKeyRotationUpdatesExistingHandlerAndWorkerRequests(t *testing.T)
 		}
 		io.WriteString(w, `{"model":"glm-5.2","choices":[{"message":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 	}))
-	defer worker.Close()
-	account, err := a.Manager.Store().Create(context.Background(), accounts.CreateAccount{Name: "fake-worker", Enabled: false})
+	defer upstream.Close()
+	account, err := a.Manager.Store().Create(context.Background(), accounts.CreateAccount{Name: "fake-upstream", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Pool.Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "child_process", URL: worker.URL, Models: []string{"glm-5.2"}})
-	// Catalog probing is tested separately; keep the fake worker deterministic.
+	a.Pool.Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "in_process", URL: upstream.URL, Models: []string{"glm-5.2"}})
+	a.Executor.Providers = providers.NewRegistry()
+	a.Executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: upstreamChatBridge{pool: a.Pool, http: upstream.Client()}})
+	// The gateway captured its executor copy when Handler() was built; push
+	// the bridge-wired executor into the live handler.
+	a.Gateway.Executor = a.Executor
+	// Catalog probing is tested separately; keep the fake upstream deterministic.
 	a.Gateway.Catalogs = nil
 	for _, path := range []string{"/v1/chat/completions", "/api/chat", "/v1/messages", "/v1/responses"} {
 		for _, stream := range []bool{false, true} {
@@ -130,8 +131,71 @@ func TestConsoleKeyRotationUpdatesExistingHandlerAndWorkerRequests(t *testing.T)
 		}
 	}
 	if calls.Load() != 8 {
-		t.Errorf("worker requests=%d want 8", calls.Load())
+		t.Errorf("upstream requests=%d want 8", calls.Load())
 	}
+}
+
+// upstreamChatBridge implements providers.ProviderChat by posting the request
+// to the pool item's URL, so regression tests can stand up fake upstreams
+// without any worker transport.
+type upstreamChatBridge struct {
+	pool *executor.Pool
+	http *http.Client
+}
+
+func (b upstreamChatBridge) urlFor(accountID string) string {
+	if item, ok := b.pool.ByID(accountID); ok {
+		return item.URL
+	}
+	return ""
+}
+
+func (b upstreamChatBridge) ChatNonStream(ctx context.Context, accountID string, req translate.ChatRequest) (providers.ChatOutcome, error) {
+	payload, _ := json.Marshal(map[string]any{"model": req.Model, "messages": req.Messages, "stream": false})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(b.urlFor(accountID), "/")+"/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return providers.ChatOutcome{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := b.http.Do(httpReq)
+	if err != nil {
+		return providers.ChatOutcome{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return providers.ChatOutcome{}, &providers.Error{Status: resp.StatusCode, Message: string(raw)}
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || len(decoded.Choices) == 0 {
+		return providers.ChatOutcome{}, fmt.Errorf("decode upstream reply: %v", err)
+	}
+	return providers.ChatOutcome{Content: decoded.Choices[0].Message.Content}, nil
+}
+
+func (b upstreamChatBridge) ChatStream(ctx context.Context, accountID string, req translate.ChatRequest) (*http.Response, providers.ResolvedChat, error) {
+	payload, _ := json.Marshal(map[string]any{"model": req.Model, "messages": req.Messages, "stream": true})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(b.urlFor(accountID), "/")+"/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return nil, providers.ResolvedChat{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := b.http.Do(httpReq)
+	if err != nil {
+		return nil, providers.ResolvedChat{}, err
+	}
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, providers.ResolvedChat{}, &providers.Error{Status: resp.StatusCode, Message: string(raw)}
+	}
+	return resp, providers.ResolvedChat{}, nil
 }
 
 func TestSaturatedPoolKeepsFiveSecondRetryAfter(t *testing.T) {
@@ -148,7 +212,7 @@ func TestSaturatedPoolKeepsFiveSecondRetryAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Pool.Upsert(executor.Item{
-		ID: account.ID, Provider: "qoder", Runtime: "child_process", URL: worker.URL,
+		ID: account.ID, Provider: "qoder", Runtime: "in_process", URL: worker.URL,
 		Models: []string{"glm-5.2"}, MaxInFlight: 1,
 	})
 	a.Pool.MergeHealth(account.ID, true, true, 1, 0, "")

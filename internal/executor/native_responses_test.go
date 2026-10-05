@@ -41,7 +41,7 @@ func TestNativeResponsesDispatchDoesNotRequireChatCompatibility(t *testing.T) {
 	registry.Register(providers.Adapter{ID: "native", NativeResponses: streamer})
 	pool := NewPool(nil, nil)
 	pool.Upsert(Item{ID: "native-1", Provider: "native", Region: "global", Runtime: "in_process", Models: []string{"m"}})
-	ex := NewChatExecutor(pool, "")
+	ex := NewChatExecutor(pool)
 	ex.Providers = registry
 
 	result, err := ex.ChatStreamProxyNativeResponses(context.Background(), translate.ChatRequest{Model: "m"}, native, "", "native")

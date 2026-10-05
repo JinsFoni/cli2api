@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
-	"net/http"
-	"strings"
 	"time"
 
-	"github.com/caigee-cmd/cli2api/internal/providers"
 	"github.com/caigee-cmd/cli2api/internal/providers/qoder"
 )
 
@@ -65,10 +62,6 @@ func (m *Manager) fetchAccountModels(ctx context.Context, item Item) {
 	if m == nil || m.pool == nil || item.ID == "" {
 		return
 	}
-	if item.Runtime == string(providers.RuntimeInProcess) || strings.TrimSpace(item.URL) == "" {
-		m.fetchProviderModels(ctx, item)
-		return
-	}
 	if adapter, ok := m.providers.Get(item.Provider); ok && adapter.Models != nil {
 		models, err := adapter.Models.Models(ctx, item.ID)
 		if err != nil {
@@ -85,57 +78,5 @@ func (m *Manager) fetchAccountModels(ctx context.Context, item Item) {
 			return
 		}
 		m.pool.MergeModels(item.ID, qoder.CatalogIDsFromInfos(models))
-		return
 	}
-	client := qoder.WorkerClient{
-		HTTP:        &http.Client{Timeout: 15 * time.Second},
-		ProxyAPIKey: m.ProxyAPIKey(),
-	}
-	entries, status, rawBody, err := client.Models(ctx, item.URL, false)
-	if err != nil || status >= 300 {
-		m.logCatalogRefresh(item, status, rawBody, err)
-		return
-	}
-	m.pool.MergeModels(item.ID, qoder.CatalogIDs(entries, nil))
-}
-
-func (m *Manager) logCatalogRefresh(item Item, status int, rawBody string, err error) {
-	var transport qoder.TransportError
-	var statusErr qoder.HTTPStatusError
-	switch {
-	case errors.As(err, &statusErr):
-		log.Printf("catalog refresh failed account=%s provider=%s stage=status status=%d body=%q", item.ID, item.Provider, statusErr.Status, statusErr.Body)
-	case errors.As(err, &transport):
-		log.Printf("catalog refresh failed account=%s provider=%s stage=http: %v", item.ID, item.Provider, err)
-	case err != nil && status == 0:
-		log.Printf("catalog refresh failed account=%s provider=%s stage=request: %v", item.ID, item.Provider, err)
-	case err != nil:
-		log.Printf("catalog refresh failed account=%s provider=%s stage=decode: %v", item.ID, item.Provider, err)
-	default:
-		snippet := strings.TrimSpace(rawBody)
-		if len(snippet) > 512 {
-			snippet = snippet[:512]
-		}
-		log.Printf("catalog refresh failed account=%s provider=%s stage=status status=%d body=%q", item.ID, item.Provider, status, snippet)
-	}
-}
-
-func (m *Manager) fetchProviderModels(ctx context.Context, item Item) {
-	if m.providers == nil {
-		return
-	}
-	adapter, ok := m.providers.Get(item.Provider)
-	if !ok || adapter.Models == nil {
-		return
-	}
-	models, err := adapter.Models.Models(ctx, item.ID)
-	if err != nil {
-		log.Printf("catalog fetch failed account=%s provider=%s: %v", item.ID, item.Provider, err)
-		return
-	}
-	ids := make([]string, 0, len(models)*2)
-	for _, model := range models {
-		ids = append(ids, model.PublicModel, model.NativeModel, model.DisplayName)
-	}
-	m.pool.MergeModels(item.ID, ids)
 }

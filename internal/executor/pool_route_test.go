@@ -7,8 +7,8 @@ import (
 
 func TestPickRouteRespectsProviderFamilyAndCooldown(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "q1", URL: "http://q1", Provider: "qoder", Runtime: "child_process"})
-	p.Upsert(Item{ID: "q2", URL: "http://q2", Provider: "qoder", Runtime: "child_process"})
+	p.Upsert(Item{ID: "q1", URL: "http://q1", Provider: "qoder", Runtime: "in_process"})
+	p.Upsert(Item{ID: "q2", URL: "http://q2", Provider: "qoder", Runtime: "in_process"})
 	p.Upsert(Item{ID: "w1", Provider: "workbuddy", Runtime: "in_process"})
 	p.Upsert(Item{ID: "w2", Provider: "workbuddy", Runtime: "in_process"})
 
@@ -75,8 +75,8 @@ func TestNormalizeProviderRegionAndAllowlist(t *testing.T) {
 
 func TestPickRouteNormalizesProviderAndRegion(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "q1", URL: "http://q1", Runtime: "child_process"})
-	p.Upsert(Item{ID: "q2", URL: "http://q2", Provider: "Qoder", Region: "Global", Runtime: "child_process"})
+	p.Upsert(Item{ID: "q1", URL: "http://q1", Runtime: "in_process"})
+	p.Upsert(Item{ID: "q2", URL: "http://q2", Provider: "Qoder", Region: "Global", Runtime: "in_process"})
 	p.Upsert(Item{ID: "w1", Provider: "WorkBuddy", Region: "CN", Runtime: "in_process"})
 
 	qoder, ok := p.PickRoute(RouteQuery{ProviderFilter: "QODER", PreferAccount: "q1"})
@@ -103,9 +103,9 @@ func TestPickRouteNormalizesProviderAndRegion(t *testing.T) {
 
 func TestPickRouteCandidateCountShrinksAfterRegionPin(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "g1", URL: "http://g1", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	p.Upsert(Item{ID: "g2", URL: "http://g2", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	p.Upsert(Item{ID: "c1", URL: "http://c1", Provider: "qoder", Region: "cn", Runtime: "child_process"})
+	p.Upsert(Item{ID: "g1", URL: "http://g1", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	p.Upsert(Item{ID: "g2", URL: "http://g2", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	p.Upsert(Item{ID: "c1", URL: "http://c1", Provider: "qoder", Region: "cn", Runtime: "in_process"})
 
 	open := RouteQuery{ProviderFilter: "qoder"}
 	if n := p.LenRoute(open); n != 3 {
@@ -131,7 +131,7 @@ func TestPickRouteCandidateCountShrinksAfterRegionPin(t *testing.T) {
 
 func TestPickRouteHonorsAPIKeyAllowlist(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "q1", URL: "http://q1", Provider: "qoder", Runtime: "child_process"})
+	p.Upsert(Item{ID: "q1", URL: "http://q1", Provider: "qoder", Runtime: "in_process"})
 	p.Upsert(Item{ID: "w1", Provider: "workbuddy", Runtime: "in_process"})
 	p.Upsert(Item{ID: "t1", Provider: "trae", Runtime: "in_process"})
 
@@ -149,9 +149,9 @@ func TestPickRouteHonorsAPIKeyAllowlist(t *testing.T) {
 
 func TestPickRouteKeepsQoderFailoverInsideRegion(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "g1", URL: "http://g1", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	p.Upsert(Item{ID: "g2", URL: "http://g2", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	p.Upsert(Item{ID: "c1", URL: "http://c1", Provider: "qoder", Region: "cn", Runtime: "child_process"})
+	p.Upsert(Item{ID: "g1", URL: "http://g1", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	p.Upsert(Item{ID: "g2", URL: "http://g2", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	p.Upsert(Item{ID: "c1", URL: "http://c1", Provider: "qoder", Region: "cn", Runtime: "in_process"})
 
 	p.MarkClassified("g1", Classified{Kind: KindRateLimit, Cooldown: time.Hour, Message: "429", Failover: true})
 	next, ok := p.PickRoute(RouteQuery{ProviderFilter: "qoder", RegionFilter: "global"})
@@ -189,8 +189,8 @@ func TestMergeModelsKeepsNativeSpelling(t *testing.T) {
 
 func TestPickRouteFiltersByPublicModel(t *testing.T) {
 	p := NewPool(nil, nil)
-	p.Upsert(Item{ID: "a", URL: "http://a", Provider: "qoder", Region: "global", Runtime: "child_process"})
-	p.Upsert(Item{ID: "b", URL: "http://b", Provider: "qoder", Region: "global", Runtime: "child_process"})
+	p.Upsert(Item{ID: "a", URL: "http://a", Provider: "qoder", Region: "global", Runtime: "in_process"})
+	p.Upsert(Item{ID: "b", URL: "http://b", Provider: "qoder", Region: "global", Runtime: "in_process"})
 	p.MergeModels("a", []string{"glm-5.2"})
 	p.MergeModels("b", []string{"hy3", "glm-5.2"})
 
@@ -237,7 +237,7 @@ func TestPickRouteRegionScopedAllowlist(t *testing.T) {
 	p := NewPool(nil, nil)
 	p.Upsert(Item{ID: "wc1", Provider: "workbuddy", Region: "cn", Runtime: "in_process"})
 	p.Upsert(Item{ID: "wg1", Provider: "workbuddy", Region: "global", Runtime: "in_process"})
-	p.Upsert(Item{ID: "q1", Provider: "qoder", Region: "global", Runtime: "child_process"})
+	p.Upsert(Item{ID: "q1", Provider: "qoder", Region: "global", Runtime: "in_process"})
 
 	// A cn-only key picks the cn account and never the global one.
 	for i := 0; i < 10; i++ {

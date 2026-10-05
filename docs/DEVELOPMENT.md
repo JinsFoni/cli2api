@@ -6,7 +6,7 @@ status: canonical
 read-when: 本地构建 / 跑测试 / 发布维护者版本时
 summary: 本地构建与校验命令，以及维护者发布流程（workflow_dispatch、unreleased fragments、归档 PR）。
 related: [CONTRIBUTING.md, docs/ARCHITECTURE_SUMMARY.md]
-last-updated: 2026-09-19
+last-updated: 2026-10-05
 ---
 
 # Development
@@ -17,7 +17,7 @@ and the maintainer release workflow.
 
 ## Requirements
 
-Go `1.25.6+`, Node.js `22+`, npm, and Docker for container development.
+Go `1.25.6+`. Node.js `22+` and npm are needed only for the console frontend build; Docker for container development.
 
 ## Validate
 
@@ -27,9 +27,6 @@ go test ./internal/app -run 'TestImportConstraints|TestDutyBoundaries' -count=1
 go test ./...
 go test -race ./...
 go vet ./...
-
-# Qoder child runtime
-(cd worker && npm ci && npm test)
 
 # Console
 (cd frontend && npm ci && npm run build && npm run lint)

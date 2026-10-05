@@ -62,8 +62,8 @@ func globalAccount(baseURL string) accounts.Account {
 func pointChatAt(t *testing.T, client *Client, upstreamURL string) {
 	t.Helper()
 	client.setEndpoints(map[string]nativeEndpoints{
-		"global": {base: upstreamURL, origin: upstreamURL},
-		"cn":     {base: upstreamURL, origin: upstreamURL},
+		"global": {Base: upstreamURL, Origin: upstreamURL},
+		"cn":     {Base: upstreamURL, Origin: upstreamURL},
 	})
 }
 

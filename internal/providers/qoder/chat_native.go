@@ -943,7 +943,7 @@ func (c *Client) buildNativeChatRequest(ctx context.Context, endpoint nativeEndp
 	if err != nil {
 		return nil, providers.ResolvedChat{}, fmt.Errorf("build chat body: %w", err)
 	}
-	prepared, err := identity.prepareInferRequest(endpoint.base, string(body), resolved.Key, resolved.Source, nil, nil)
+	prepared, err := identity.prepareInferRequest(endpoint.Base, string(body), resolved.Key, resolved.Source, nil, nil)
 	if err != nil {
 		return nil, providers.ResolvedChat{}, err
 	}
@@ -1204,8 +1204,8 @@ func (s *chatStreamState) outcome(resolved providers.ResolvedChat) (providers.Ch
 // chatRegionEndpoints maps a region to its chat/inference host (the WASM
 // prepareInferRequest target), distinct from the openapi control-plane host.
 var chatRegionEndpoints = map[string]nativeEndpoints{
-	"cn":     {base: "https://gateway.qoder.com.cn", origin: "https://qoder.com.cn"},
-	"global": {base: "https://api1.qoder.sh", origin: "https://qoder.com"},
+	"cn":     {Base: "https://gateway.qoder.com.cn", Origin: "https://qoder.com.cn"},
+	"global": {Base: "https://api1.qoder.sh", Origin: "https://qoder.com"},
 }
 
 // chatEndpointFor resolves the chat host, honoring the test override first.

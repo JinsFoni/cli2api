@@ -99,11 +99,9 @@ func New(cfg config.Config) *App {
 	ring := applogs.NewRing(2000)
 	log.SetOutput(io.MultiWriter(os.Stderr, ring))
 	manager := accountruntime.NewManager(accountruntime.ManagerConfig{
-		DataDir: runtimeDir, BasePort: cfg.WorkerBasePort, NodeBinary: cfg.NodeBinary,
-		DaemonPath: cfg.WorkerDaemonPath, QoderCLIPath: cfg.QoderCLIPath, QoderCNCLIPath: cfg.QoderCNCLIPath,
-		TemplatePath: cfg.PlainTemplatePath, ProxyAPIKey: proxyAPIKey, ProxyURL: proxyURL,
+		DataDir: runtimeDir, ProxyAPIKey: proxyAPIKey, ProxyURL: proxyURL,
 		MaxLogWriters: io.MultiWriter(os.Stderr, ring),
-	}, store, nil)
+	}, store)
 	if err := manager.Start(context.Background()); err != nil {
 		panic(err)
 	}
@@ -131,7 +129,7 @@ func New(cfg config.Config) *App {
 	if strings.TrimSpace(cfg.UpdateAgentURL) != "" {
 		agent = appupdate.NewHTTPAgentClient(cfg.UpdateAgentURL, cfg.UpdateAgentToken)
 	}
-	chatExecutor := executor.NewChatExecutor(pool, proxyAPIKey)
+	chatExecutor := executor.NewChatExecutor(pool)
 	chatExecutor.MaxAttempts = cfg.MaxRetryAccounts
 	chatExecutor.Providers = providerReg
 	chatExecutor.OnAttempt = recorder.Attempt
@@ -152,9 +150,6 @@ func New(cfg config.Config) *App {
 	if a.Control.Settings != nil {
 		a.Control.Settings.BindCatalog(a.Control.Catalog)
 	}
-	// Auth copies and all executor copies read the same atomic live key.
-	// Cfg.ProxyAPIKey and Executor.WorkerKey remain bootstrap snapshots.
-	a.Executor.WorkerKeySource = a.Auth.ConsoleKey
 	a.Update = a.newUpdateCoordinator(checker, agent)
 	a.Gateway = a.newGateway()
 	a.Console = a.newConsole()

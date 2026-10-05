@@ -230,29 +230,11 @@ func TestModelContextSettingsAPI(t *testing.T) {
 		QoderHome: t.TempDir(), DataDir: t.TempDir(),
 	})
 	defer srv.Close()
-
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// App startup may probe the pool after this fake worker is registered.
-		// Handle background traffic separately from the catalog assertions.
-		if r.URL.Path == "/health" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "ready": true, "hot": true})
-			return
-		}
-		if r.URL.Path == "/admin/quota" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.URL.Path != "/admin/models" {
-			t.Errorf("worker path = %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{
-			"id": "minimax-m3", "display_name": "MiniMax-M3", "mapped_key": "mmodel",
-		}}})
-	}))
-	defer worker.Close()
-	srv.Pool.Upsert(executor.Item{ID: "test", URL: worker.URL})
+	catalog := &countingCatalog{models: []providers.ModelInfo{{
+		NativeModel: "minimax-m3", PublicModel: "minimax-m3", DisplayName: "MiniMax-M3",
+	}}}
+	srv.Pool.Upsert(executor.Item{ID: "test", Provider: "qoder", Runtime: string(providers.RuntimeInProcess)})
+	srv.Providers.Register(providers.Adapter{ID: "qoder", Models: catalog})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/models/minimax-m3", bytes.NewBufferString(`{"context_length":500000}`))
 	req.Header.Set("Authorization", "Bearer secret")
