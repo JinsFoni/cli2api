@@ -11,7 +11,19 @@
     "sse_cn.json": {
       "sha256": "568eb38ee1fc20d4ddab8b2acb0ca78a7b4672408dbf1613c03f2dc85c275c01",
       "bytes": 3423
+    },
+    "prepare_global.json": {
+      "sha256": "5d0535be06b941e3bfe7c6c093eeea2f951cbb1042eaedaf032074e515577651",
+      "bytes": 5429
+    },
+    "sse_global.json": {
+      "sha256": "04c8e56f54918860b46c7a27ec1297fedc1c4be0ae4c05e94ed8934e5fa83421",
+      "bytes": 3830
+    },
+    "credential_global.json": {
+      "sha256": "688774f986f27d93e692e039ec57c984b2a12272d95f1f383c8c2343d1b7299d",
+      "bytes": 1762
     }
   },
-  "recordedAt": "2026-10-05T11:57:07.906Z"
+  "recordedAt": "2026-10-05T15:04:17.453Z"
 }

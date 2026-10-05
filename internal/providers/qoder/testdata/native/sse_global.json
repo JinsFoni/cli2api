@@ -1,0 +1,20 @@
+{
+  "httpStatus": 200,
+  "contentType": "text/event-stream;charset=UTF-8",
+  "totalFrames": 36,
+  "samples": {
+    "normal": "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"reasoning_content\\\":\\\"\\\",\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "usage": "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\"},\\\"finish_reason\\\":\\\"stop\\\",\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\",\\\"usage\\\":{\\\"billable\\\":true,\\\"completion_tokens\\\":33,\\\"completion_tokens_details\\\":{\\\"reasoning_tokens\\\":31},\\\"credits\\\":0.001571507142857143,\\\"original_credits\\\":0.001571507142857143,\\\"prompt_tokens\\\":33,\\\"prompt_tokens_details\\\":{\\\"cached_tokens\\\":0},\\\"total_tokens\\\":66}}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "error": null
+  },
+  "rawFirstFrames": [
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"reasoning_content\\\":\\\"\\\",\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"reasoning_content\\\":\\\"We\\\"},\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"reasoning_content\\\":\\\" need\\\"},\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}"
+  ],
+  "rawTailFrames": [
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\"},\\\"finish_reason\\\":\\\"stop\\\",\\\"index\\\":0}],\\\"created\\\":1791212656,\\\"id\\\":\\\"b96a68ae-74c6-40cd-97ca-a54ad5663ac0\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"system_fingerprint\\\":\\\"aeb56401ca74e127821c4f9126dcb669\\\",\\\"usage\\\":{\\\"billable\\\":true,\\\"completion_tokens\\\":33,\\\"completion_tokens_details\\\":{\\\"reasoning_tokens\\\":31},\\\"credits\\\":0.001571507142857143,\\\"original_credits\\\":0.001571507142857143,\\\"prompt_tokens\\\":33,\\\"prompt_tokens_details\\\":{\\\"cached_tokens\\\":0},\\\"total_tokens\\\":66}}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"[DONE]\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "event:finish\ndata:{\"firstTokenDuration\":451,\"totalDuration\":1227,\"serverDuration\":51}"
+  ]
+}
