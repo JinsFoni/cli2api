@@ -3,6 +3,44 @@
 Published user-facing notes for GitHub Releases and the console update page.
 Write upcoming notes as bilingual files in `changelog/unreleased/`.
 
+## 1.0.0 - 2026-10-05
+
+### English
+
+- Add a system setting to let disabled accounts continue their opted-in automatic daily check-in without making them eligible for chat routing.
+- Fix Qoder CN daily check-in by sending the machine identity headers required by the campaign service.
+- Move Qoder check-in and quota refresh into the Go process: daily credit claims now run over direct Bearer HTTP with the stored credential, and the browser-grade worker stays chat-only. Accounts kept enabled just for check-in can now be disabled, which frees the several-hundred-MB worker process per account. Refreshed tokens are written back to the credential store instead of being lost.
+- Qoder accounts now run fully in-process: chat, login, model catalog,
+  check-in, and usage no longer spawn a per-account Node worker.
+- Multiple Qoder accounts no longer cost hundreds of MB each; memory usage
+  with many accounts drops to near zero for idle accounts.
+- Node.js and the qodercli / qoderclicn packages are no longer required at
+  runtime — the Docker image no longer ships a Node layer. SOCKS proxies are
+  now supported for Qoder accounts.
+- Qoder global accounts can now claim the daily 100 Credits check-in — the
+  campaigns/claim flow is identical across regions (verified live against
+  openapi.qoder.sh).
+- The Docker Compose file was slimmed down: only the optional host-updater
+  variables remain; everything else uses image defaults. The obsolete
+  `QODER_SSE_DIAGNOSTIC_MODELS` variable is gone.
+- A routing region latch no longer survives a large change in pool composition. Adding or migrating many accounts of another region now re-seats the route on the largest region instead of leaving the new accounts idle.
+
+### 中文
+
+- 新增系统设置，允许停用账号继续执行已开启的自动签到，同时不会让它们重新参与聊天调度。
+- 修复 Qoder 国内版每日签到，补齐活动服务要求的机器身份请求头。
+- Qoder 签到与额度刷新迁入 Go 进程：每日积分领取改为携带存储凭证的直连 Bearer HTTP，Node worker 只保留聊天推理。仅为签到保留的账号现在可以直接停用，每个账号可省下数百 MB 的常驻 worker 内存。刷新后的令牌会写回凭证库，不再丢失。
+- Qoder 账号改为全进程内原生实现:chat、登录、模型目录、签到与用量不再
+  为每个账号拉起 Node worker。
+- 多账号场景下,空闲账号内存占用接近零,不再每个账号消耗数百 MB。
+- 运行时不再需要 Node.js 与 qodercli / qoderclicn 包,Docker 镜像也不再
+  包含 Node 层;Qoder 账号现支持 SOCKS 代理。
+- Qoder 国际版账号现支持每日 100 Credits 签到 —— 两个区域走同一套
+  campaigns/claim 流程(已在 openapi.qoder.sh 实测验证)。
+- Docker Compose 文件精简:只保留可选的宿主更新器变量,其余全部使用镜像
+  默认值;移除已失效的 `QODER_SSE_DIAGNOSTIC_MODELS` 变量。
+- 路由的区域锁定不再跨越大规模的账号池变化。新增或迁移大量其他区域的账号后，路由会重新落到账号最多的区域，而不会让新账号闲置。
+
 ## 0.6.12 - 2026-09-29
 
 ### English
