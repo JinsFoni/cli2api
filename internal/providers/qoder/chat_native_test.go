@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -242,9 +243,15 @@ func TestNativeChatStreamEnvelopesTranslateToOpenAIChunks(t *testing.T) {
 	if sawUA != "Bun/1.3.14" {
 		t.Fatalf("user agent = %q", sawUA)
 	}
+	// Task 8 recording: upstream body arrives encoded (Encode=1); decode it
+	// back before asserting the plain JSON fields.
+	decoded, err := decodeNativeBody(sawBody)
+	if err != nil {
+		t.Fatalf("decode encoded chat body: %v", err)
+	}
 	var body map[string]any
-	if err := json.Unmarshal(sawBody, &body); err != nil {
-		t.Fatalf("request body not plain JSON: %v", err)
+	if err := json.Unmarshal(decoded, &body); err != nil {
+		t.Fatalf("request body not plain JSON after decode: %v", err)
 	}
 	if body["stream"] != true {
 		t.Fatalf("upstream body must always stream: %v", body["stream"])
@@ -656,21 +663,27 @@ func TestNativeChatIdentityCacheHitsAndInvalidates(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNativeChatHeadersGlobalAndCN(t *testing.T) {
-	var globalHeaders, cnHeaders http.Header
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch strings.HasPrefix(r.URL.Path, "/algo/") {
-		case r.Header.Get("Appcode") == "cosy":
-			cnHeaders = r.Header.Clone()
-			fmt.Fprint(w, sseEnvelopeRaw(200, chunkJSON(map[string]any{"content": "cn"}, "stop")))
-		default:
-			globalHeaders = r.Header.Clone()
-			fmt.Fprint(w, sseEnvelopeRaw(200, chunkJSON(map[string]any{"content": "g"}, "stop")))
-		}
-	}))
-	defer upstream.Close()
+	// Task 8 真机录制(testdata/native/prepare_cn.json,2026-10-05):双
+	// region 头矩阵一致——无 Appcode/Clientip/Machineos,Data-Policy 存在,
+	// Machinetoken == MachineId,URL 均带 Encode=1。本测试按录制基线回归:
+	// 各起一个假上游,分别服务 global 与 cn 账号。
+	newCaptureServer := func(headersOut *http.Header, queryOut *url.Values) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*headersOut = r.Header.Clone()
+			*queryOut = r.URL.Query()
+			fmt.Fprint(w, sseEnvelopeRaw(200, chunkJSON(map[string]any{"content": "ok"}, "stop")))
+		}))
+	}
 
-	store := &countStore{fakeNativeStore: fakeNativeStore{account: globalAccount(upstream.URL), credential: encryptedCredential(t, machineID, nil)}}
-	store.chatBase = upstream.URL
+	var globalHeaders, cnHeaders http.Header
+	var globalQuery, cnQuery url.Values
+	globalUpstream := newCaptureServer(&globalHeaders, &globalQuery)
+	defer globalUpstream.Close()
+	cnUpstream := newCaptureServer(&cnHeaders, &cnQuery)
+	defer cnUpstream.Close()
+
+	store := &countStore{fakeNativeStore: fakeNativeStore{account: globalAccount(globalUpstream.URL), credential: encryptedCredential(t, machineID, nil)}}
+	store.chatBase = globalUpstream.URL
 	client := nativeChatClient(t, store)
 	resp, _, err := client.ChatStream(context.Background(), "acc-1", chatRequest("glm-5.2", true))
 	if err != nil {
@@ -683,23 +696,36 @@ func TestNativeChatHeadersGlobalAndCN(t *testing.T) {
 	if globalHeaders.Get("Cosy-Machineid") != machineID || globalHeaders.Get("X-Model-Key") != "glm-5.2" {
 		t.Fatalf("global machine=%q modelkey=%q", globalHeaders.Get("Cosy-Machineid"), globalHeaders.Get("X-Model-Key"))
 	}
+	if globalHeaders.Get("Appcode") != "" || globalHeaders.Get("Cosy-Clientip") != "" || globalHeaders.Get("Cosy-Machineos") != "" {
+		t.Fatalf("global must not carry Appcode/Clientip/Machineos: appcode=%q clientip=%q machineos=%q",
+			globalHeaders.Get("Appcode"), globalHeaders.Get("Cosy-Clientip"), globalHeaders.Get("Cosy-Machineos"))
+	}
+	if globalQuery.Get("Encode") != "1" {
+		t.Fatalf("global query must carry Encode=1: %v", globalQuery)
+	}
 
-	cnStore := &countStore{fakeNativeStore: fakeNativeStore{account: cnAccount(upstream.URL), credential: encryptedCredential(t, machineID, nil)}}
-	cnStore.chatBase = upstream.URL
+	cnStore := &countStore{fakeNativeStore: fakeNativeStore{account: cnAccount(cnUpstream.URL), credential: encryptedCredential(t, machineID, nil)}}
+	cnStore.chatBase = cnUpstream.URL
 	cnClient := nativeChatClient(t, cnStore)
 	cnResp, _, err := cnClient.ChatStream(context.Background(), "acc-1", chatRequest("glm-5.2", true))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = cnResp.Body.Close()
-	if cnHeaders.Get("Appcode") != "cosy" || cnHeaders.Get("Cosy-Clientip") == "" {
-		t.Fatalf("cn headers appcode=%q clientip=%q", cnHeaders.Get("Appcode"), cnHeaders.Get("Cosy-Clientip"))
+	if cnHeaders.Get("Appcode") != "" || cnHeaders.Get("Cosy-Clientip") != "" {
+		t.Fatalf("cn must not carry Appcode/Clientip (per recording): appcode=%q clientip=%q", cnHeaders.Get("Appcode"), cnHeaders.Get("Cosy-Clientip"))
 	}
-	if cnHeaders.Get("Cosy-Data-Policy") != "" || cnHeaders.Get("Cosy-Organization-Id") != "" || cnHeaders.Get("Cosy-Organization-Tags") != "" {
-		t.Fatalf("cn must drop policy/org headers: %v", cnHeaders)
+	if cnHeaders.Get("Cosy-Data-Policy") != "agree" {
+		t.Fatalf("cn Cosy-Data-Policy = %q, want agree (per recording)", cnHeaders.Get("Cosy-Data-Policy"))
+	}
+	if cnHeaders.Get("Cosy-Machinetoken") != cnHeaders.Get("Cosy-Machineid") || cnHeaders.Get("Cosy-Machineid") == "" {
+		t.Fatalf("cn machinetoken must equal machineid (per recording): %q vs %q", cnHeaders.Get("Cosy-Machinetoken"), cnHeaders.Get("Cosy-Machineid"))
 	}
 	if cnHeaders.Get("Cosy-User") != "u-1" {
 		t.Fatalf("cn cosy user = %q", cnHeaders.Get("Cosy-User"))
+	}
+	if cnQuery.Get("Encode") != "1" {
+		t.Fatalf("cn query must carry Encode=1 (per recording): %v", cnQuery)
 	}
 }
 
@@ -749,8 +775,12 @@ func TestNativeChatReasoningLevelEchoesClampedEffort(t *testing.T) {
 	var sawParameters map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		decoded, err := decodeNativeBody(body)
+		if err != nil {
+			t.Errorf("decode encoded chat body: %v", err)
+		}
 		var parsed map[string]any
-		_ = json.Unmarshal(body, &parsed)
+		_ = json.Unmarshal(decoded, &parsed)
 		sawParameters, _ = parsed["parameters"].(map[string]any)
 		fmt.Fprint(w, sseEnvelopeRaw(200, chunkJSON(map[string]any{"content": "x"}, "stop")))
 	}))

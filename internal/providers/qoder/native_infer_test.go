@@ -218,33 +218,34 @@ func TestPrepareInferGlobalBodyEncoded(t *testing.T) {
 }
 
 func TestPrepareInferCNBranch(t *testing.T) {
+	// Task 8 真机录制(testdata/native/prepare_cn.json,2026-10-05,
+	// CLI 1.1.32):CN 与 global 头矩阵与 URL 完全一致——Encode=1、编码 body、
+	// Cosy-Machinetoken == MachineId、有 Cosy-Data-Policy,无 Appcode /
+	// Cosy-Clientip / Cosy-Machineos / User-Agent。
 	id := inferTestIdentity("cn")
 	prepared := mustPrepare(t, id, bytes.Repeat([]byte{0x31}, 16), "", "")
-	if prepared.URL != "https://chat.example/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common" {
+	if prepared.URL != "https://chat.example/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1" {
 		t.Fatalf("cn url: %s", prepared.URL)
 	}
-	if prepared.Body != `{"x":1}` {
-		t.Fatalf("cn body must be plaintext JSON: %s", prepared.Body)
+	if prepared.Body == `{"x":1}` {
+		t.Fatal("cn body must be encoded (Encode=1 recorded for cn)")
 	}
-	if prepared.Header.Get("Appcode") != "cosy" {
-		t.Fatal("Appcode missing")
+	if prepared.Header.Get("Appcode") != "" {
+		t.Fatal("Appcode must be absent (recording shows no Appcode)")
 	}
-	if ip := prepared.Header.Get("Cosy-Clientip"); len(ip) != 36 || strings.Count(ip, "-") != 4 {
-		t.Fatalf("clientip not UUID-form: %q", ip)
+	if prepared.Header.Get("Cosy-Clientip") != "" {
+		t.Fatal("Cosy-Clientip must be absent (recording shows no clientip)")
 	}
-	if prepared.Header.Get("Cosy-Machineos") == "" {
-		t.Fatal("Cosy-Machineos missing")
+	if prepared.Header.Get("Cosy-Machineos") != "" {
+		t.Fatal("Cosy-Machineos must be absent (recording shows no machineos)")
 	}
-	if _, ok := prepared.Header["Cosy-Machinetoken"]; !ok {
-		t.Fatal("Cosy-Machinetoken must be present (empty) for cn")
+	if got := prepared.Header.Get("Cosy-Machinetoken"); got != id.MachineID {
+		t.Fatalf("cn machinetoken = %q, want machine id %q (per recording)", got, id.MachineID)
 	}
-	if prepared.Header.Get("Cosy-Machinetoken") != "" {
-		t.Fatal("cn machinetoken must be empty")
+	if got := prepared.Header.Get("Cosy-Data-Policy"); got != "agree" {
+		t.Fatalf("cn Cosy-Data-Policy = %q, want agree (per recording)", got)
 	}
-	if prepared.Header.Get("Cosy-Data-Policy") != "" {
-		t.Fatal("cn must omit Cosy-Data-Policy (until Task 8 recording)")
-	}
-	if prepared.Header.Get("Cosy-Organization-Id") != "" || prepared.Header.Get("Cosy-Organization-Tags") != "" {
-		t.Fatal("cn must omit org headers (until Task 8 recording)")
+	if prepared.Header.Get("User-Agent") != "" {
+		t.Fatal("header matrix must not carry User-Agent (WASM emits none)")
 	}
 }

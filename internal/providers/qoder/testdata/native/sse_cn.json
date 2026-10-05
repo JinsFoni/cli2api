@@ -1,0 +1,20 @@
+{
+  "httpStatus": 200,
+  "contentType": "text/event-stream;charset=UTF-8",
+  "totalFrames": 34,
+  "samples": {
+    "normal": "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\",\\\"reasoning_content\\\":\\\"\\\",\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1791201313,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "usage": "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[],\\\"created\\\":1791201315,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"usage\\\":{\\\"billable\\\":true,\\\"completion_tokens\\\":97,\\\"completion_tokens_details\\\":{\\\"reasoning_tokens\\\":93},\\\"credits\\\":0.01782044,\\\"original_credits\\\":0.01782044,\\\"prompt_tokens\\\":13,\\\"prompt_tokens_details\\\":{\\\"cacheable_tokens\\\":0,\\\"cached_tokens\\\":0},\\\"total_tokens\\\":110}}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "error": null
+  },
+  "rawFirstFrames": [
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\",\\\"reasoning_content\\\":\\\"\\\",\\\"role\\\":\\\"assistant\\\"},\\\"index\\\":0}],\\\"created\\\":1791201313,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\",\\\"reasoning_content\\\":\\\"用户\\\"},\\\"index\\\":0}],\\\"created\\\":1791201313,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"\\\",\\\"reasoning_content\\\":\\\"要求只回复“\\\"},\\\"index\\\":0}],\\\"created\\\":1791201313,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}"
+  ],
+  "rawTailFrames": [
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[],\\\"created\\\":1791201315,\\\"id\\\":\\\"chatcmpl-ab263863-cbe8-9fa0-80e3-97180beed267\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\",\\\"usage\\\":{\\\"billable\\\":true,\\\"completion_tokens\\\":97,\\\"completion_tokens_details\\\":{\\\"reasoning_tokens\\\":93},\\\"credits\\\":0.01782044,\\\"original_credits\\\":0.01782044,\\\"prompt_tokens\\\":13,\\\"prompt_tokens_details\\\":{\\\"cacheable_tokens\\\":0,\\\"cached_tokens\\\":0},\\\"total_tokens\\\":110}}\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"[DONE]\",\"statusCodeValue\":200,\"statusCode\":\"OK\"}",
+    "event:finish\ndata:{\"firstTokenDuration\":340,\"totalDuration\":1979,\"serverDuration\":79}"
+  ]
+}

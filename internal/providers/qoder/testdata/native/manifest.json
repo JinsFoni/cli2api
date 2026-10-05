@@ -1,0 +1,17 @@
+{
+  "files": {
+    "prepare_cn.json": {
+      "sha256": "a28254cdd112829820e12df7a36291b27f6b8f14a90aa5cdc06e20bd3dbdc92d",
+      "bytes": 5453
+    },
+    "credential_cn.json": {
+      "sha256": "86eaa634b7a826bf17f552dcbdb0217a518e2f688d5bc8e904b3e9464ba88515",
+      "bytes": 1690
+    },
+    "sse_cn.json": {
+      "sha256": "568eb38ee1fc20d4ddab8b2acb0ca78a7b4672408dbf1613c03f2dc85c275c01",
+      "bytes": 3423
+    }
+  },
+  "recordedAt": "2026-10-05T11:57:07.906Z"
+}

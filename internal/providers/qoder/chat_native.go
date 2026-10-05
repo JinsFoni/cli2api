@@ -36,9 +36,11 @@ func (c *Client) identityCache() *identityCache {
 
 // upstreamEnvelope is one `data: {headers, body, statusCodeValue}` frame.
 type upstreamEnvelope struct {
-	Body             json.RawMessage `json:"body"`
-	StatusCodeValue  *int            `json:"statusCodeValue"`
-	StatusCodeCompat *int            `json:"statusCode"`
+	Body            json.RawMessage `json:"body"`
+	StatusCodeValue *int            `json:"statusCodeValue"`
+	// StatusCode is recorded as "OK"/"E..." strings upstream; kept raw
+	// because only statusCodeValue drives decisions.
+	StatusCode json.RawMessage `json:"statusCode"`
 }
 
 // upstreamBody carries the decoded envelope body.
@@ -779,9 +781,6 @@ func stateError(state *chatStreamState) error {
 func statusOf(envelope upstreamEnvelope) int {
 	if envelope.StatusCodeValue != nil {
 		return *envelope.StatusCodeValue
-	}
-	if envelope.StatusCodeCompat != nil {
-		return *envelope.StatusCodeCompat
 	}
 	return 0
 }

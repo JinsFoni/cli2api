@@ -95,7 +95,9 @@ func buildChatIdentity(account accounts.Account, cred userBlob) (inferIdentity, 
 		Version:          qoderCLIVersion,
 		DataPolicyAgreed: true,
 		Region:           account.ProviderRegion,
-		PlainBody:        true,
+		// PlainBody stays false: Task 8 recordings (testdata/native/
+		// prepare_cn.json) show both regions send Encode=1 with an encoded
+		// body, matching the WASM path byte for byte.
 	}
 	fields, err := generateRuntimeFields(runtimeFieldsInput{
 		UID:              infer.UID,
