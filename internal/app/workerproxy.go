@@ -14,6 +14,7 @@ func WaitForWorkerAuthManager(ctx context.Context, lookup func() (string, bool),
 }
 func EntryModelRegions(entry map[string]any) []string { return control.EntryModelRegions(entry) }
 func (a *App) catalogSource() *control.CatalogSource {
+	qoderClient := qoder.NewClient(a.Manager.Store())
 	worker := qoder.DisplayCatalog{Key: a.Auth.ConsoleKey, Lookup: func(id string) (string, bool) {
 		if id != "" {
 			item, ok := a.Pool.ByID(id)
@@ -22,6 +23,17 @@ func (a *App) catalogSource() *control.CatalogSource {
 		item, ok := a.Pool.First()
 		return item.URL, ok
 	}}
+	worker.Native = func(ctx context.Context, accountID string, refresh bool) ([]map[string]any, error) {
+		entries, err := qoderClient.FetchModelsNativeRows(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			qoder.ApplyModelPricing(entry)
+			qoder.ApplyModelContext(entry)
+		}
+		return entries, nil
+	}
 	return &control.CatalogSource{Providers: a.Providers, WorkerModels: worker.Models, Accounts: func() []control.CatalogAccount {
 		var out []control.CatalogAccount
 		for _, item := range a.Pool.Items() {

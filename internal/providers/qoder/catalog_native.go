@@ -219,3 +219,30 @@ func catalogSnapshotRows(entries []map[string]any) []map[string]any {
 	}
 	return rows
 }
+
+// FetchModelsNativeRows fetches the native catalog and returns the display
+// rows (worker snapshot shape, pricing/context applied by the caller).
+func (c *Client) FetchModelsNativeRows(ctx context.Context, accountID string) ([]map[string]any, error) {
+	account, cred, err := c.resolvedCredential(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := buildChatIdentity(account, cred)
+	if err != nil {
+		return nil, err
+	}
+	httpClient, err := c.nativeHTTP(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	cc := catalogClient{
+		HTTP:     httpClient,
+		Region:   account.ProviderRegion,
+		Identity: identity,
+	}
+	entries, err := cc.fetchCatalogRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return catalogSnapshotRows(entries), nil
+}

@@ -13,10 +13,16 @@ import (
 type DisplayCatalog struct {
 	Lookup func(string) (string, bool)
 	Key    func() string
+	// Native fetches the model catalog in-process for accounts with no
+	// worker URL. Nil keeps the pure worker behavior.
+	Native func(ctx context.Context, accountID string, refresh bool) ([]map[string]any, error)
 }
 
 func (s DisplayCatalog) Models(ctx context.Context, id string, refresh bool) ([]map[string]any, error) {
 	url, ok := s.Lookup(id)
+	if (!ok || url == "") && s.Native != nil {
+		return s.Native(ctx, id, refresh)
+	}
 	if !ok || url == "" {
 		return nil, fmt.Errorf("no running Qoder account")
 	}
