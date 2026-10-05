@@ -4,7 +4,8 @@
 
 Docker Compose is the supported installation. Use Docker Engine + Compose on
 Linux or Docker Desktop on macOS / Windows (Linux containers).
-The `qoder-data` volume stores SQLite and account credentials. Source runs are
+The `./qoder-data` directory (next to `docker-compose.yml`) stores SQLite and
+account credentials. Source runs are
 for development and do not support managed updates.
 
 From the repository root, use:
@@ -223,5 +224,5 @@ The flow is implemented, but live upgrade / rollback acceptance remains pending.
 Keep a separate database backup before upgrading.
 
 Keep `deploy/.env` private: Docker Desktop mode stores an updater token there.
-Do not remove `qoder-data` or run `docker compose down -v` unless you intend to
+Do not delete `deploy/qoder-data` or run `docker compose down -v` unless you intend to
 delete the accounts and credentials.

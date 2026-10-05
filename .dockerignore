@@ -12,3 +12,4 @@ capture-raw
 docs/PRIVATE_DEPLOYMENT.md
 docs/private
 .DS_Store
+deploy/qoder-data
