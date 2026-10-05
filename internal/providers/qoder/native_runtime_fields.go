@@ -19,16 +19,15 @@ import (
 )
 
 // runtimePublicKeyPEM 是上游 CLI 用于生成 Cosy-Key 的固定公钥(纯公钥材料,
-// 非上游版权代码)。从 pinned CLI 1.1.32 内嵌 WASM 提取,过程与日期记录在
-// docs/private/qoder-native-protocol-notes.md;2048-bit → RSA 密文 256 字节。
+// 非上游版权代码)。Task 11 真机录制推翻了最初提取:WASM 内嵌两把公钥,
+// generate_runtime_auth_fields 实际使用的是这把 1024-bit 密钥(密文 128 字节
+// → base64 172 字符,与真实 CN 账号持久化的 .auth/user 中 key 长度一致);
+// 2048-bit 那把(先前蒸馏的来源)用于其他用途。两把均为纯公钥材料。
 const runtimePublicKeyPEM = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs3CIxzX2tjwLTH6CrR00
-+lbHjOGLA39jsaARwQotV9gyH2lhMdygEEYNcWX1ETzmpyRgD7klV2MjLVjKGUEI
-Dl+u741ob3o3klEwtfJuVs4jGejJ9Aki/IHz2yM0Lfz8GdsRnJgMa8GcuCbSZnZj
-eT/vIvoJVdXkjaNAapYAGYgF3SRyMdEpFzugdbIRTedXMAdSIYovHmL0W+2OxDA+
-o1nhs9kQ7ShP52l8dDkz4kElw02clPdjVOm3MGjuRHJQs6Ar9iHn76a82Ea6A6Kr
-Gy6owj0FM0gZDF2SCQm9zTvx5tQp1IXX7b9U1izJfdeYj7I+KMDAeOyusF3BQgoO
-uwIDAQAB
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDA8iMH5c02LilrsERw9t6Pv5Nc
+4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPOh+Nx0spthYA2BqGz+l
+6HRkPJ7S236FZz73In/KVuLnwI8JJ2CbuJap8kvheCCZpmAWpb/cPx/3Vr/J6I17
+XcW+ML9FoCI6AOvOzwIDAQAB
 -----END PUBLIC KEY-----`
 
 // runtimeFields 是 chat 请求头需要的一对运行时字段。

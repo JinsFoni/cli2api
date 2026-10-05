@@ -1113,3 +1113,17 @@ func firstNonEmptyString(values ...string) string {
 	}
 	return ""
 }
+
+// canonicalModelID normalizes a model name to the routing id: trimmed
+// lowercase with spaces/underscores collapsed to dashes (catalog.mjs parity).
+func canonicalModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "auto"
+	}
+	model = strings.ToLower(model)
+	model = strings.Join(strings.FieldsFunc(model, func(r rune) bool {
+		return r == ' ' || r == '_'
+	}), "-")
+	return model
+}

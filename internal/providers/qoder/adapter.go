@@ -154,25 +154,27 @@ func (c *Client) accountWorker(httpClient *http.Client, accountID string) Worker
 }
 
 func (c *Client) Models(ctx context.Context, accountID string) ([]providers.ModelInfo, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.RLock()
-	httpClient := c.modelsHTTP
-	c.mu.RUnlock()
-	entries, status, rawBody, err := c.worker(httpClient).Models(ctx, workerURL, false)
-	if err != nil {
-		return nil, err
-	}
-	if status >= 300 {
-		snippet := strings.TrimSpace(rawBody)
-		if len(snippet) > 512 {
-			snippet = snippet[:512]
+	// Native path: signed GET against the per-region model catalog. The
+	// worker /admin/models fallback remains reachable only when the account
+	// still carries a process URL (migration window).
+	if workerURL, err := c.lookup(accountID); err == nil && workerURL != "" {
+		c.mu.RLock()
+		httpClient := c.modelsHTTP
+		c.mu.RUnlock()
+		entries, status, rawBody, err := c.worker(httpClient).Models(ctx, workerURL, false)
+		if err != nil {
+			return nil, err
 		}
-		return nil, HTTPStatusError{Op: "models", Status: status, Body: snippet}
+		if status >= 300 {
+			snippet := strings.TrimSpace(rawBody)
+			if len(snippet) > 512 {
+				snippet = snippet[:512]
+			}
+			return nil, HTTPStatusError{Op: "models", Status: status, Body: snippet}
+		}
+		return ModelInfos(entries), nil
 	}
-	return ModelInfos(entries), nil
+	return c.FetchModelsNative(ctx, accountID)
 }
 
 func numberField(entry map[string]any, key string) int {

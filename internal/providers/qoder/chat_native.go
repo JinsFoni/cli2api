@@ -1040,7 +1040,7 @@ func (c *Client) openChatStream(ctx context.Context, accountID string, req trans
 	if err != nil {
 		return nil, providers.ResolvedChat{}, err
 	}
-	endpoint, ok := c.endpoint(account.ProviderRegion)
+	endpoint, ok := c.chatEndpointFor(account.ProviderRegion)
 	if !ok {
 		return nil, providers.ResolvedChat{}, fmt.Errorf("qoder region %q has no chat endpoint", account.ProviderRegion)
 	}
@@ -1199,4 +1199,25 @@ func (s *chatStreamState) outcome(resolved providers.ResolvedChat) (providers.Ch
 		outcome.Credits = &value
 	}
 	return outcome, nil
+}
+
+// chatRegionEndpoints maps a region to its chat/inference host (the WASM
+// prepareInferRequest target), distinct from the openapi control-plane host.
+var chatRegionEndpoints = map[string]nativeEndpoints{
+	"cn":     {base: "https://gateway.qoder.com.cn", origin: "https://qoder.com.cn"},
+	"global": {base: "https://api1.qoder.sh", origin: "https://qoder.com"},
+}
+
+// chatEndpointFor resolves the chat host, honoring the test override first.
+func (c *Client) chatEndpointFor(region string) (nativeEndpoints, bool) {
+	c.mu.RLock()
+	override := c.endpointsOverride
+	c.mu.RUnlock()
+	if override != nil {
+		if endpoint, ok := override[strings.ToLower(strings.TrimSpace(region))]; ok {
+			return endpoint, true
+		}
+	}
+	endpoint, ok := chatRegionEndpoints[strings.ToLower(strings.TrimSpace(region))]
+	return endpoint, ok
 }

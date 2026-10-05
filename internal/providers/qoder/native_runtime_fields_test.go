@@ -34,7 +34,8 @@ func TestGenerateRuntimeFieldsDeterministic(t *testing.T) {
 	if a != b {
 		t.Fatal("same entropy must yield same output")
 	}
-	// 结构校验:公钥 2048-bit → RSA 密文 256 字节,标准 Base64。
+	// 结构校验:公钥 1024-bit → RSA 密文 128 字节,标准 Base64(Task 11
+	// 真机录制:.auth/user 中 key 为 172 字符 base64 = 128 字节密文)。
 	infoRaw, err := base64.StdEncoding.DecodeString(a.EncryptUserInfo)
 	if err != nil {
 		t.Fatalf("encrypt_user_info not standard base64: %v", err)
@@ -43,8 +44,8 @@ func TestGenerateRuntimeFieldsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("key not standard base64: %v", err)
 	}
-	if len(keyRaw) != 256 {
-		t.Fatalf("RSA ciphertext must be 256 bytes, got %d", len(keyRaw))
+	if len(keyRaw) != 128 {
+		t.Fatalf("RSA ciphertext must be 128 bytes, got %d", len(keyRaw))
 	}
 	if len(infoRaw)%16 != 0 {
 		t.Fatal("AES ciphertext not block aligned")

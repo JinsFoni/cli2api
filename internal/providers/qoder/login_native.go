@@ -341,3 +341,26 @@ func (l loginNativeClient) EndpointForPublic() (string, bool) {
 	e, ok := l.endpointFor()
 	return e.base, ok
 }
+
+// DebugHTTPClient exposes the native HTTP client for diagnostics.
+func (c *Client) DebugHTTPClient(ctx context.Context, accountID string) (*http.Client, error) {
+	account, err := c.nativeStore.Get(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return c.nativeHTTP(ctx, account)
+}
+
+// SignedCatalogRequestForDebug builds the signed catalog request for one account.
+func (c *Client) SignedCatalogRequestForDebug(ctx context.Context, accountID string) (*http.Request, error) {
+	account, cred, err := c.resolvedCredential(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := buildChatIdentity(account, cred)
+	if err != nil {
+		return nil, err
+	}
+	cc := catalogClient{Region: account.ProviderRegion, Identity: identity}
+	return cc.signedCatalogRequest(ctx, nil, nil)
+}
