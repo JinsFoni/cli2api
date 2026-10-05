@@ -161,7 +161,6 @@ install_linux() {
   fi
   require_commands docker systemctl install mktemp awk curl stat chown
   ensure_env_file
-  set_env_value CLI2API_UPDATER_SOCKET_DIR /run/cli2api-updater
   set_env_value UPDATE_AGENT_URL ""
   set_env_value UPDATE_AGENT_TOKEN ""
 
@@ -247,7 +246,6 @@ install_macos() {
   if [[ -z "${token}" ]]; then
     token="$(openssl rand -hex 32)"
   fi
-  set_env_value CLI2API_UPDATER_SOCKET_DIR /tmp/cli2api-updater
   set_env_value UPDATE_AGENT_URL http://host.docker.internal:3011
   set_env_value UPDATE_AGENT_TOKEN "${token}"
 

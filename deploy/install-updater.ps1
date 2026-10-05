@@ -16,7 +16,6 @@ $StatusFile = Join-Path $InstallDir "status.json"
 $Runner = Join-Path $InstallDir "run-updater.ps1"
 $StdoutLog = Join-Path $InstallDir "stdout.log"
 $StderrLog = Join-Path $InstallDir "stderr.log"
-$SocketPlaceholder = Join-Path $InstallDir "socket-placeholder"
 $TaskName = "CLI2API Updater"
 $ContainerName = "qoder-api-proxy"
 $ServiceName = "qoder-api-proxy"
@@ -201,14 +200,12 @@ if ($LASTEXITCODE -ne 0) {
 if (-not (Test-Path $EnvFile)) {
     Copy-Item $EnvExample $EnvFile
 }
-New-Item -ItemType Directory -Force -Path $InstallDir, $SocketPlaceholder | Out-Null
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $Token = Read-EnvValue $EnvFile "UPDATE_AGENT_TOKEN"
 if ([string]::IsNullOrWhiteSpace($Token)) {
     $Token = New-RandomToken
 }
-$DockerSocketPath = $SocketPlaceholder.Replace("\", "/")
-Set-EnvValue $EnvFile "CLI2API_UPDATER_SOCKET_DIR" $DockerSocketPath
 Set-EnvValue $EnvFile "UPDATE_AGENT_URL" "http://host.docker.internal:3011"
 Set-EnvValue $EnvFile "UPDATE_AGENT_TOKEN" $Token
 

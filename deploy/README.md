@@ -136,7 +136,6 @@ console; environment variables cannot replace it.
 | `UPDATE_GITHUB_TOKEN` | empty | Optional GitHub token for release checks |
 | `UPDATE_AGENT_URL` | empty | Docker Desktop host updater URL, written by the installer |
 | `UPDATE_AGENT_TOKEN` | empty | Docker Desktop updater token, written by the installer |
-| `CLI2API_UPDATER_SOCKET_DIR` | platform-specific | Host directory mounted read-only for the Linux updater socket |
 
 These are process settings; Compose passes only variables declared in its
 `environment` section. For variables not listed there — for example
