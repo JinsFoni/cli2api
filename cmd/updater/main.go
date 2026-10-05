@@ -20,7 +20,6 @@ func main() {
 	var authTokenFile string
 	var statusFile string
 	var composeFile string
-	var envFile string
 	var serviceName string
 	var containerName string
 	var imageRepository string
@@ -32,7 +31,6 @@ func main() {
 	flag.StringVar(&authTokenFile, "auth-token-file", "", "file containing the TCP Bearer token")
 	flag.StringVar(&statusFile, "status-file", "/var/lib/cli2api-updater/status.json", "persistent updater status")
 	flag.StringVar(&composeFile, "compose-file", "", "absolute docker-compose.yml path")
-	flag.StringVar(&envFile, "env-file", "", "absolute Compose env file path")
 	flag.StringVar(&serviceName, "service", "qoder-api-proxy", "Compose service name")
 	flag.StringVar(&containerName, "container", "qoder-api-proxy", "container name")
 	flag.StringVar(&imageRepository, "image-repository", "ghcr.io/caigee-cmd/cli2api", "allowed image repository")
@@ -52,7 +50,7 @@ func main() {
 		log.Fatal(err)
 	}
 	executor := updater.NewExecutor(updater.ExecutorConfig{
-		ComposeFile: composeFile, EnvFile: envFile, ServiceName: serviceName,
+		ComposeFile: composeFile, ServiceName: serviceName,
 		ContainerName: containerName, ImageRepository: imageRepository, HealthURL: healthURL,
 		HealthTimeout: healthTimeout, HostBinaryPath: hostBinary,
 		GitHubToken: strings.TrimSpace(os.Getenv("UPDATE_GITHUB_TOKEN")),

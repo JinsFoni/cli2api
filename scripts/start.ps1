@@ -5,21 +5,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RootDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$EnvFile = Join-Path $RootDir "deploy\.env"
-$EnvExample = Join-Path $RootDir "deploy\.env.example"
 $ComposeFile = Join-Path $RootDir "deploy\docker-compose.yml"
 
 function Invoke-Compose {
-    & docker compose --env-file $EnvFile -f $ComposeFile @args | Out-Host
+    & docker compose -f $ComposeFile @args | Out-Host
     return ($LASTEXITCODE -eq 0)
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required. Install and start Docker Desktop first."
-}
-if (-not (Test-Path $EnvFile)) {
-    Copy-Item $EnvExample $EnvFile
-    Write-Host "Created $EnvFile; SQLite will generate the API key on first startup."
 }
 & docker info *> $null
 if ($LASTEXITCODE -ne 0) {
@@ -56,7 +50,7 @@ if (-not $Healthy) {
 }
 
 Write-Host "CLI2API is running at http://127.0.0.1:3010"
-$Logs = & docker compose --env-file $EnvFile -f $ComposeFile logs --no-color --since $StartedAt qoder-api-proxy 2>$null
+$Logs = & docker compose -f $ComposeFile logs --no-color --since $StartedAt qoder-api-proxy 2>$null
 $NewKey = $Logs | Select-String -SimpleMatch "initialized API key"
 if ($NewKey) {
     $NewKey.Line | Write-Host

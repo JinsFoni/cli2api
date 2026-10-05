@@ -19,7 +19,6 @@ import (
 
 type ExecutorConfig struct {
 	ComposeFile     string
-	EnvFile         string
 	ServiceName     string
 	ContainerName   string
 	ImageRepository string
@@ -132,10 +131,6 @@ func (e *Executor) Apply(ctx context.Context, _ string, request ApplyRequest, pr
 	if err != nil {
 		return false, err
 	}
-	_, envMode, err := readEnvFile(e.config.EnvFile)
-	if err != nil {
-		return false, err
-	}
 
 	currentImage := e.config.ImageRepository + ":" + request.CurrentVersion
 	targetImage := e.config.ImageRepository + ":" + request.TargetVersion
@@ -163,53 +158,46 @@ func (e *Executor) Apply(ctx context.Context, _ string, request ApplyRequest, pr
 			return false, err
 		}
 	}
-	if err := setEnvValueAtomic(e.config.EnvFile, envMode, "CLI2API_IMAGE", targetImage); err != nil {
-		return false, err
-	}
-
 	progress("recreating")
 	if err := e.compose(ctx, "up", "-d", "--no-deps", "--force-recreate", e.config.ServiceName); err != nil {
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	after, err := e.inspectContainer(ctx)
 	if err != nil {
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	if err := e.restoreNetworks(ctx, before, after); err != nil {
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	progress("checking")
 	if err := e.waitForVersion(ctx, request.TargetVersion); err != nil {
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	afterMount, err := findDataMount(after)
 	if err != nil || mountIdentity(afterMount) != mountIdentity(mount) {
 		if err == nil {
 			err = fmt.Errorf("/data mount changed during update")
 		}
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	if err := e.refreshStagedHostBinaryFromContainer(ctx); err != nil && strings.TrimSpace(e.config.HostBinaryPath) != "" {
 		if _, statErr := os.Stat(e.config.HostBinaryPath + ".new"); statErr != nil {
-			return e.rollback(request, before, mount, currentImage, envMode, fmt.Errorf("copy host updater from container: %w", err), progress)
+			return e.rollback(request, before, mount, currentImage, fmt.Errorf("copy host updater from container: %w", err), progress)
 		}
 	}
 	if err := e.CommitHostBinary(); err != nil {
-		return e.rollback(request, before, mount, currentImage, envMode, err, progress)
+		return e.rollback(request, before, mount, currentImage, err, progress)
 	}
 	return false, nil
 }
 
-func (e *Executor) rollback(request ApplyRequest, before containerInspect, mount dataMount, currentImage string, envMode os.FileMode, cause error, progress func(string)) (bool, error) {
+func (e *Executor) rollback(request ApplyRequest, before containerInspect, mount dataMount, currentImage string, cause error, progress func(string)) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	progress("rolling_back")
 	e.discardStagedHostBinary()
 	if err := e.compose(ctx, "stop", e.config.ServiceName); err != nil {
-		return false, rollbackFailed(cause, err)
-	}
-	if err := setEnvValueAtomic(e.config.EnvFile, envMode, "CLI2API_IMAGE", currentImage); err != nil {
 		return false, rollbackFailed(cause, err)
 	}
 	if err := e.restoreSQLite(ctx, mount, currentImage, request.BackupPath); err != nil {
@@ -258,8 +246,11 @@ sync`
 	return nil
 }
 
+// compose pins the image through the process environment: Compose variable
+// substitution prefers real environment variables over any env-file or
+// override file, so the pinned tag always wins during an update.
 func (e *Executor) compose(ctx context.Context, args ...string) error {
-	commandArgs := []string{"compose", "--env-file", e.config.EnvFile, "-f", e.config.ComposeFile}
+	commandArgs := []string{"compose", "-f", e.config.ComposeFile}
 	commandArgs = append(commandArgs, args...)
 	_, err := e.runner.Run(ctx, "docker", commandArgs...)
 	return err
@@ -379,7 +370,6 @@ func (e *Executor) waitForVersion(ctx context.Context, expected string) error {
 func (e *Executor) validateConfig() error {
 	for name, value := range map[string]string{
 		"compose file":     e.config.ComposeFile,
-		"env file":         e.config.EnvFile,
 		"image repository": e.config.ImageRepository,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -388,48 +378,12 @@ func (e *Executor) validateConfig() error {
 	}
 	for name, value := range map[string]string{
 		"compose file": e.config.ComposeFile,
-		"env file":     e.config.EnvFile,
 	} {
 		if !filepath.IsAbs(value) {
 			return fmt.Errorf("%s must be absolute", name)
 		}
 	}
 	return nil
-}
-
-func readEnvFile(path string) ([]byte, os.FileMode, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, 0, fmt.Errorf("stat env file: %w", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, 0, fmt.Errorf("read env file: %w", err)
-	}
-	return data, info.Mode().Perm(), nil
-}
-
-func setEnvValueAtomic(path string, mode os.FileMode, key, value string) error {
-	data, _, err := readEnvFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	prefix := key + "="
-	found := false
-	for index, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			lines[index] = prefix + value
-			found = true
-		}
-	}
-	if !found {
-		for len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-		lines = append(lines, prefix+value, "")
-	}
-	return writeEnvFileAtomic(path, mode, []byte(strings.Join(lines, "\n")))
 }
 
 func writeEnvFileAtomic(path string, mode os.FileMode, data []byte) error {

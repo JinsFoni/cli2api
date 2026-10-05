@@ -2,13 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ROOT_DIR}/deploy/.env"
-COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/deploy/docker-compose.yml")
-
-if [[ ! -f "${ENV_FILE}" ]]; then
-  cp "${ROOT_DIR}/deploy/.env.example" "${ENV_FILE}"
-  echo "Created ${ENV_FILE}; SQLite will generate the API key on first startup."
-fi
+COMPOSE=(docker compose -f "${ROOT_DIR}/deploy/docker-compose.yml")
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ! "${COMPOSE[@]}" pull; then
