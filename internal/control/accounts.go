@@ -295,8 +295,17 @@ func (a *Accounts) Admin(ctx context.Context, input AccountAdminAction) (Account
 		if err := json.Unmarshal(input.Body, &payload); err != nil {
 			return AccountAdminResult{}, operationError("invalid_request", err.Error())
 		}
-		if err := a.LoginPAT(ctx, input.AccountID, payload.PAT); err != nil {
-			return AccountAdminResult{}, err
+		// Qoder runs the native PAT flow (jobToken exchange + userinfo) and
+		// persists the CLI-shaped credential blob; other providers use the
+		// generic credential-importer path.
+		if account.Provider == "qoder" {
+			if err := a.LoginPATNative(ctx, input.AccountID, payload.PAT); err != nil {
+				return AccountAdminResult{}, err
+			}
+		} else {
+			if err := a.LoginPAT(ctx, input.AccountID, payload.PAT); err != nil {
+				return AccountAdminResult{}, err
+			}
 		}
 		return AccountAdminResult{Kind: "login_complete", LoginStatus: "ok", LoginMsg: "login complete"}, nil
 	default:
