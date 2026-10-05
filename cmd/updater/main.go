@@ -33,7 +33,7 @@ func main() {
 	flag.StringVar(&composeFile, "compose-file", "", "absolute docker-compose.yml path")
 	flag.StringVar(&serviceName, "service", "qoder-api-proxy", "Compose service name")
 	flag.StringVar(&containerName, "container", "qoder-api-proxy", "container name")
-	flag.StringVar(&imageRepository, "image-repository", "ghcr.io/caigee-cmd/cli2api", "allowed image repository")
+	flag.StringVar(&imageRepository, "image-repository", "ghcr.io/jinsfoni/cli2api", "allowed image repository")
 	flag.StringVar(&healthURL, "health-url", "http://127.0.0.1:3010/health", "service health URL")
 	flag.DurationVar(&healthTimeout, "health-timeout", 120*time.Second, "versioned health-check timeout")
 	flag.Parse()

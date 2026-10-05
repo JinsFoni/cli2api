@@ -22,7 +22,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $StartedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 if (-not (Invoke-Compose pull)) {
-    throw "Failed to pull ghcr.io/caigee-cmd/cli2api:latest; check your network or registry access."
+    throw "Failed to pull ghcr.io/jinsfoni/cli2api:latest; check your network or registry access."
 }
 if (-not (Invoke-Compose up -d)) {
     throw "Failed to start CLI2API."

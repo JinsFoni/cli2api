@@ -30,7 +30,7 @@ To run Compose directly:
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The image always comes from `ghcr.io/caigee-cmd/cli2api:latest`; only
+The image always comes from `ghcr.io/jinsfoni/cli2api:latest`; only
 `127.0.0.1:3010` is published.
 
 Save the administrator key printed once in the first-start logs:

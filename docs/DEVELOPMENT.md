@@ -87,6 +87,6 @@ Expected artifacts for a published tag:
 | Kind | Names |
 |------|--------|
 | GitHub Release assets (7) | six `cli2api-updater_{os}_{arch}` binaries and `cli2api-updater_checksums.txt` |
-| GHCR (`ghcr.io/caigee-cmd/cli2api`) | `v0.x.y`, `0.x.y`, series (`0.2`), `latest`, all the same multi-arch digest |
+| GHCR (`ghcr.io/jinsfoni/cli2api`) | `v0.x.y`, `0.x.y`, series (`0.2`), `latest`, all the same multi-arch digest |
 
 If a **pre-publication** job fails (`prepare` / `assets` / `draft` / `image` / `promote`), use **Re-run failed jobs** on the same run. The draft remains unpublished. Do not create the tag locally while that draft exists.

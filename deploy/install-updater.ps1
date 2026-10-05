@@ -18,7 +18,7 @@ $StderrLog = Join-Path $InstallDir "stderr.log"
 $TaskName = "CLI2API Updater"
 $ContainerName = "qoder-api-proxy"
 $ServiceName = "qoder-api-proxy"
-$ImageRepository = "ghcr.io/caigee-cmd/cli2api"
+$ImageRepository = "ghcr.io/jinsfoni/cli2api"
 $ListenAddress = "127.0.0.1:3011"
 $GitHubRepository = "caigee-cmd/cli2api"
 

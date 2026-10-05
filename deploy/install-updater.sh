@@ -6,7 +6,7 @@ OVERRIDE_FILE="${ROOT_DIR}/deploy/docker-compose.override.yml"
 COMPOSE_FILE="${ROOT_DIR}/deploy/docker-compose.yml"
 CONTAINER_NAME="qoder-api-proxy"
 SERVICE_NAME="qoder-api-proxy"
-IMAGE_REPOSITORY="ghcr.io/caigee-cmd/cli2api"
+IMAGE_REPOSITORY="ghcr.io/jinsfoni/cli2api"
 GITHUB_REPOSITORY="caigee-cmd/cli2api"
 
 require_commands() {

@@ -80,7 +80,7 @@ func TestExecutorApplySuccess(t *testing.T) {
 		currentVersion = "v0.2.1"
 		targetVersion  = "v0.2.2"
 		backupPath     = "/data/backups/qoder-20260824T010203.000000000Z.db"
-		repository     = "ghcr.io/caigee-cmd/cli2api"
+		repository     = "ghcr.io/jinsfoni/cli2api"
 	)
 	targetImage := repository + ":" + targetVersion
 	currentImage := repository + ":" + currentVersion
@@ -144,7 +144,7 @@ func TestExecutorRollbackUsesFreshContextAndOldImage(t *testing.T) {
 		currentVersion = "v0.2.1"
 		targetVersion  = "v0.2.2"
 		backupPath     = "/data/backups/qoder-20260824T010203.000000000Z.db"
-		repository     = "ghcr.io/caigee-cmd/cli2api"
+		repository     = "ghcr.io/jinsfoni/cli2api"
 	)
 	targetImage := repository + ":" + targetVersion
 	currentImage := repository + ":" + currentVersion

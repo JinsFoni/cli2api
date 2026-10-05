@@ -1,6 +1,6 @@
 services:
   qoder-api-proxy:
-    image: ghcr.io/caigee-cmd/cli2api:latest
+    image: ghcr.io/jinsfoni/cli2api:latest
     container_name: qoder-api-proxy
     volumes:
       - ./qoder-data:/data

@@ -6,7 +6,7 @@ COMPOSE=(docker compose -f "${ROOT_DIR}/deploy/docker-compose.yml")
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ! "${COMPOSE[@]}" pull; then
-  echo "Failed to pull ghcr.io/caigee-cmd/cli2api:latest; check your network or registry access." >&2
+  echo "Failed to pull ghcr.io/jinsfoni/cli2api:latest; check your network or registry access." >&2
   exit 1
 fi
 "${COMPOSE[@]}" up -d
