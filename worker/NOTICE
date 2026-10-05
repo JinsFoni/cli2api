@@ -1,8 +1,0 @@
-Qoder CN check-in follows the official Qoder CN desktop campaign API:
-
-  GET  https://openapi.qoder.com.cn/sash/api/v1/me/campaigns
-  POST https://openapi.qoder.com.cn/sash/api/v1/me/campaigns/{campaignId}/claim
-
-Observed from Qoder CN 0.3.4 (activity iframe
-https://g.alicdn.com/qbase/qoder/0.0.704/growth-page/activity-iframe/activity-iframe.js).
-The worker reuses the pinned AuthManager and does not copy Qoder's campaign UI.

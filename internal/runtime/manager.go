@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
@@ -15,41 +14,10 @@ import (
 var errManagerClosed = errors.New("account manager closed")
 
 type ManagerConfig struct {
-	DataDir         string
-	BasePort        int
-	NodeBinary      string
-	DaemonPath      string
-	QoderCLIPath    string
-	QoderCNCLIPath  string
-	TemplatePath    string
-	ProxyAPIKey     string
-	ProxyURL        string
-	MaxLogWriters   io.Writer
-	RestartDelay    time.Duration
-	RestartMaxDelay time.Duration
-}
-
-type ManagedProcess interface {
-	URL() string
-	Done() <-chan error
-	Stop() error
-}
-
-type ProcessStarter interface {
-	Start(context.Context, Account, string, int) (ManagedProcess, error)
-}
-
-// ProxyConfigurableStarter lets the manager push the global outbound proxy to a
-// starter that can apply it to newly spawned workers. Kept optional so test
-// starters need not implement it.
-type ProxyConfigurableStarter interface {
-	SetProxyURL(string)
-}
-
-// APIKeyConfigurableStarter is the sibling of ProxyConfigurableStarter for the
-// manager's proxy API key.
-type APIKeyConfigurableStarter interface {
-	SetProxyAPIKey(string)
+	DataDir       string
+	ProxyAPIKey   string
+	ProxyURL      string
+	MaxLogWriters io.Writer
 }
 
 // WorkBuddyMaintainer is the Phase N ops surface. Implemented by
@@ -64,19 +32,13 @@ type Manager struct {
 	config         ManagerConfig
 	store          AccountStore
 	poolState      PoolStateStore
-	starter        ProcessStarter
 	pool           *Pool
 	providers      *providers.Registry
 	workbuddy      WorkBuddyMaintainer
 	checkinRunning map[string]bool
 	mu             sync.Mutex
-	processes      map[string]ManagedProcess
 	restarts       map[string]int
 	restartBackoff map[string]int
-	recovering     map[string]bool
-	recoverDone    sync.WaitGroup
-	nextPort       int
-	httpClient     *http.Client
 	runCtx         context.Context
 	cancel         context.CancelFunc
 	// The persistence path is one mutex-guarded goroutine. The dirty set
@@ -100,44 +62,24 @@ type Manager struct {
 	persistCloseCh    chan struct{} // closed by Close(); drainer's retry backoff watches it
 	persistDone       sync.WaitGroup
 
-	// Serializes ReloadProxyURL so two settings PATCHes cannot interleave
-	// stop/start cycles. proxyReloadPending stays true while the applied global
-	// proxy differs from what the running workers use (a reload attempt failed,
-	// or one was never made), so resubmitting the same value can still retry
-	// instead of being treated as a no-op. Guarded by mu.
+	// Serializes ReloadProxyURL so two settings PATCHes cannot interleave.
+	// proxyReloadPending stays true while the applied global proxy differs from
+	// what running transports use (a reload attempt failed, or one was never
+	// made), so resubmitting the same value can still retry instead of being
+	// treated as a no-op. Guarded by mu.
 	proxyReloadMu      sync.Mutex
 	proxyReloadPending bool
 }
 
-func NewManager(config ManagerConfig, store AccountStore, starter ProcessStarter) *Manager {
-	if config.BasePort <= 0 {
-		config.BasePort = 32100
-	}
-	if config.RestartDelay <= 0 {
-		config.RestartDelay = time.Second
-	}
-	if config.RestartMaxDelay <= 0 {
-		config.RestartMaxDelay = time.Minute
-	}
-	if config.RestartMaxDelay < config.RestartDelay {
-		config.RestartMaxDelay = config.RestartDelay
-	}
-	if starter == nil {
-		starter = NewExecStarter(config)
-	}
+func NewManager(config ManagerConfig, store AccountStore) *Manager {
 	runCtx, cancel := context.WithCancel(context.Background())
 	manager := &Manager{
 		config:            config,
 		store:             store,
 		poolState:         store,
-		starter:           starter,
 		pool:              NewPool(nil, nil),
-		processes:         map[string]ManagedProcess{},
 		restarts:          map[string]int{},
 		restartBackoff:    map[string]int{},
-		recovering:        map[string]bool{},
-		nextPort:          config.BasePort,
-		httpClient:        &http.Client{Timeout: 2 * time.Second},
 		runCtx:            runCtx,
 		cancel:            cancel,
 		persistDirty:      map[string]Item{},
@@ -449,40 +391,10 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	m.cancel()
 	m.mu.Unlock()
-	m.recoverDone.Wait()
-	m.mu.Lock()
-	processes := make([]ManagedProcess, 0, len(m.processes))
-	for _, process := range m.processes {
-		processes = append(processes, process)
-	}
-	m.processes = map[string]ManagedProcess{}
-	m.mu.Unlock()
-	var joined error
-	for _, process := range processes {
-		joined = errors.Join(joined, process.Stop())
-	}
-	return joined
+	return nil
 }
 
 const persistRetryBackoff = 500 * time.Millisecond
-
-func (m *Manager) TestProcess(id string) ManagedProcess {
-	if m == nil {
-		return nil
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.processes[id]
-}
-
-func (m *Manager) TestProcessCount() int {
-	if m == nil {
-		return 0
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.processes)
-}
 
 func (m *Manager) TestRecovering(id string) bool {
 	if m == nil {
@@ -490,11 +402,7 @@ func (m *Manager) TestRecovering(id string) bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.recovering[id]
-}
-
-func (m *Manager) TestRestartDelay(level int) time.Duration {
-	return m.restartDelay(level)
+	return false
 }
 
 func (m *Manager) TestPersistDirtyLen() int {

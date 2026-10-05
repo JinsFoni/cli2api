@@ -8,8 +8,7 @@ import (
 type RuntimeKind string
 
 const (
-	RuntimeChildProcess RuntimeKind = "child_process"
-	RuntimeInProcess    RuntimeKind = "in_process"
+	RuntimeInProcess RuntimeKind = "in_process"
 )
 
 type AuthType string
@@ -83,12 +82,13 @@ func (d ProviderDescriptor) SupportsAuthType(auth AuthType) bool {
 	return false
 }
 
-// Qoder descriptor. Region selects the pinned CLI and config directory:
-// global uses @qoder-ai/qodercli + .qoder, cn uses @qodercn-ai/qoderclicn + .qoder-cn.
+// Qoder descriptor. Chat/check-in/quota run natively in-process (the
+// per-account Node worker is retired by the qoder-native-path milestone);
+// region selects endpoints and the check-in policy.
 var Qoder = ProviderDescriptor{
 	ID:                "qoder",
 	Label:             "Qoder",
-	Runtime:           RuntimeChildProcess,
+	Runtime:           RuntimeInProcess,
 	AuthTypes:         []AuthType{AuthNone, AuthOAuth, AuthPAT, AuthNative},
 	CredentialFormats: []string{"qoder-native-v1"},
 	Capabilities: ProviderCapabilities{
@@ -101,6 +101,7 @@ var Qoder = ProviderDescriptor{
 			ID: "global", Label: "Global", ChatBase: "https://api1.qoder.sh",
 			BillingBase: "https://openapi.qoder.sh", AuthBase: "https://qoder.sh",
 			DefaultDomain: "qoder.global",
+			Checkin:       &CheckinPolicy{Timezone: "Asia/Shanghai"},
 		},
 		{
 			ID: "cn", Label: "CN", ChatBase: "https://gateway.qoder.com.cn",

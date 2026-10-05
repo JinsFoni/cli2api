@@ -60,16 +60,6 @@ jobs:
           }
           if ($Failed) { exit 1 }
 
-  worker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm test
-        working-directory: worker
-
   frontend:
     runs-on: ubuntu-latest
     steps:

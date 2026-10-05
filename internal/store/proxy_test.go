@@ -8,6 +8,8 @@ import (
 )
 
 func TestValidateAccountProxy(t *testing.T) {
+	// Native path: every provider is in-process and the shared Go transport
+	// handles http(s), socks5, and socks5h, so no scheme is provider-gated.
 	ok := []struct {
 		provider string
 		region   string
@@ -17,6 +19,8 @@ func TestValidateAccountProxy(t *testing.T) {
 		{provider: "qoder", region: "global", raw: "direct"},
 		{provider: "qoder", region: "cn", raw: "http://proxy.example:8080"},
 		{provider: "qoder", region: "global", raw: "https://proxy.example:8443"},
+		{provider: "qoder", region: "global", raw: "socks5://proxy.example:1080"},
+		{provider: "qoder", region: "cn", raw: "socks5h://proxy.example:1080"},
 		{provider: "workbuddy", raw: "socks5://proxy.example:1080"},
 		{provider: "trae", raw: "socks5h://proxy.example:1080"},
 	}
@@ -25,23 +29,9 @@ func TestValidateAccountProxy(t *testing.T) {
 			t.Fatalf("ValidateAccountProxy(%q,%q,%q) = %v, want nil", test.provider, test.region, test.raw, err)
 		}
 	}
-
-	rejected := []struct {
-		provider string
-		region   string
-		raw      string
-	}{
-		{provider: "qoder", region: "global", raw: "socks5://proxy.example:1080"},
-		{provider: "qoder", region: "cn", raw: "socks5h://proxy.example:1080"},
-	}
-	for _, test := range rejected {
-		if err := accounts.ValidateAccountProxy(test.provider, test.region, test.raw); err == nil {
-			t.Fatalf("ValidateAccountProxy(%q,%q,%q) unexpectedly succeeded", test.provider, test.region, test.raw)
-		}
-	}
 }
 
-func TestStoreCreateRejectsQoderSOCKS(t *testing.T) {
+func TestStoreCreateAcceptsQoderSOCKS(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
@@ -49,8 +39,8 @@ func TestStoreCreateRejectsQoderSOCKS(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := store.Create(ctx, accounts.CreateAccount{Name: "QoderSocks", Enabled: true, ProxyURL: "socks5://proxy.example:1080"}); err == nil {
-		t.Fatal("Qoder account with SOCKS proxy was accepted")
+	if _, err := store.Create(ctx, accounts.CreateAccount{Name: "QoderSocks", Enabled: true, ProxyURL: "socks5://proxy.example:1080"}); err != nil {
+		t.Fatalf("Qoder account with SOCKS proxy rejected: %v", err)
 	}
 	if _, err := store.Create(ctx, accounts.CreateAccount{Name: "QoderHTTP", Enabled: true, ProxyURL: "http://proxy.example:8080"}); err != nil {
 		t.Fatalf("Qoder account with HTTP proxy rejected: %v", err)
@@ -63,7 +53,7 @@ func TestStoreCreateRejectsQoderSOCKS(t *testing.T) {
 	}
 }
 
-func TestStoreUpdateKeepsOriginalOnRejectedProxy(t *testing.T) {
+func TestStoreUpdateProxyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store, err := OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
@@ -77,50 +67,15 @@ func TestStoreUpdateKeepsOriginalOnRejectedProxy(t *testing.T) {
 	}
 
 	socks := "socks5://proxy.example:1080"
-	if err := store.Update(ctx, account.ID, accounts.UpdateAccount{ProxyURL: &socks}); err == nil {
-		t.Fatal("Qoder proxy update to SOCKS was accepted")
+	if err := store.Update(ctx, account.ID, accounts.UpdateAccount{ProxyURL: &socks}); err != nil {
+		t.Fatalf("proxy update to SOCKS rejected: %v", err)
 	}
 
 	reloaded, err := store.Get(ctx, account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.ProxyURL != "http://proxy.example:8080" {
-		t.Fatalf("stored proxy changed after rejected update: %q", reloaded.ProxyURL)
+	if reloaded.ProxyURL != socks {
+		t.Fatalf("stored proxy = %q, want %q", reloaded.ProxyURL, socks)
 	}
 }
-
-func TestSetSecretOrEmptyPersistsClearedValue(t *testing.T) {
-	ctx := context.Background()
-	store, err := OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	if err := store.SetSecretOrEmpty(ctx, "proxy_url", "http://proxy.example:8080"); err != nil {
-		t.Fatal(err)
-	}
-	value, found, err := store.GetSecret(ctx, "proxy_url")
-	if err != nil || !found || value != "http://proxy.example:8080" {
-		t.Fatalf("value=%q found=%v err=%v", value, found, err)
-	}
-
-	// Clearing keeps the row present with an empty value, unlike DeleteSecret.
-	if err := store.SetSecretOrEmpty(ctx, "proxy_url", "   "); err != nil {
-		t.Fatal(err)
-	}
-	value, found, err = store.GetSecret(ctx, "proxy_url")
-	if err != nil || !found || value != "" {
-		t.Fatalf("after clear: value=%q found=%v err=%v (want found empty row)", value, found, err)
-	}
-
-	// SetSecret still rejects empty so unrelated secrets keep their contract.
-	if err := store.SetSecret(ctx, "other", ""); err == nil {
-		t.Fatal("SetSecret accepted an empty value")
-	}
-}
-
-// A failed global-proxy reload must stay retryable with the same value. The
-// manager tracks a pending flag so "same value" alone does not short-circuit
-// the reload while workers still run on the old proxy.

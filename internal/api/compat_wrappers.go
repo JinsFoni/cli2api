@@ -155,12 +155,6 @@ func requestSessionKey(r *http.Request, identity auth.Identity, req translate.Ch
 	return executor.SessionKeyFor(header, identity, req)
 }
 
-func waitForWorkerAuthManager(ctx context.Context, lookup func() (string, bool), timeout, interval time.Duration) (string, error) {
-	return app.WaitForWorkerAuthManager(ctx, lookup, timeout, interval)
-}
-
 func entryModelRegions(entry map[string]any) []string {
 	return app.EntryModelRegions(entry)
 }
-
-var errWorkerNotWarm = app.ErrWorkerNotWarm

@@ -4,8 +4,9 @@
 
 Docker Compose is the supported installation. Use Docker Engine + Compose on
 Linux or Docker Desktop on macOS / Windows (Linux containers).
-The `qoder-data` volume stores SQLite and account credentials. Source runs are
-for development and do not support managed updates.
+The `./qoder-data` directory (next to `docker-compose.yml`) stores SQLite and
+account credentials. Source runs are for development and do not support
+managed updates.
 
 From the repository root, use:
 
@@ -21,23 +22,21 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ```
 
-Both launchers create `deploy/.env` if needed, pull the published image, fall
-back to a local build when necessary, and wait for `/health`.
+Both launchers pull the published image and wait for `/health`.
 
-To run Compose directly, create `deploy/.env` first (an empty file is enough
-for defaults; do not overwrite an existing file):
+To run Compose directly:
 
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Add `--build` to build from the checked-out source. Only `127.0.0.1:3010` is
-published.
+The image always comes from `ghcr.io/caigee-cmd/cli2api:latest`; only
+`127.0.0.1:3010` is published.
 
 Save the administrator key printed once in the first-start logs:
 
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs qoder-api-proxy
+docker compose -f deploy/docker-compose.yml logs qoder-api-proxy
 ```
 
 Open `http://127.0.0.1:3010`, sign in with that key, and add an account.
@@ -56,8 +55,8 @@ Use **Accounts** to add an account with its supported login method:
 | Devin (experimental) | Global | Browser OAuth, `devin-session-v1` |
 
 Qoder CN, WorkBuddy, and Trae still need live-account acceptance; Devin is not
-claimed production-ready. Qoder uses one isolated Node worker per account.
-Other providers use Go in-process adapters. All durable credentials stay in SQLite.
+claimed production-ready. All providers run as Go in-process adapters; the image
+needs no Node runtime. All durable credentials stay in SQLite.
 
 WorkBuddy daily check-in and token keepalive are per-account opt-in and disabled
 by default. Enable them only if you want those automatic account operations.
@@ -127,29 +126,38 @@ console; environment variables cannot replace it.
 <details>
 <summary>Advanced environment variables and diagnostics</summary>
 
+Container settings come from `deploy/docker-compose.yml` and the image
+defaults. Compose also loads `deploy/docker-compose.override.yml`
+automatically when it exists — use it for local customization instead of
+editing the tracked file. There is no `.env` file.
+
+Environment variables you can set for the container:
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `QODER_DATA_DIR` | `/data` | SQLite database and durable account credentials |
-| `QODER_RUNTIME_DIR` | `/run/cli2api` | Ephemeral per-account runtime homes for providers that use child processes |
 | `QODER_MAX_RETRY_ACCOUNTS` | `4` | Maximum accounts attempted for one request (1-64) |
-| `QODER_SSE_DIAGNOSTIC_MODELS` | empty | Comma-separated Qoder model IDs for redacted SSE diagnostics in Runtime Logs; `*` enables all |
-| `QODER_WORKER_BASE_PORT` | `32100` | Internal child-runtime port range |
 | `QODER_PROXY_URL` | empty | Initial global outbound proxy: `http(s)://`, `direct`, or `none`; saved console settings take precedence |
-| `QODERCLI_JS` | image default | Pinned Qoder Global CLI bundle |
-| `QODERCNCLI_JS` | image default | Pinned Qoder CN CLI bundle |
 | `UPDATE_GITHUB_TOKEN` | empty | Optional GitHub token for release checks |
-| `UPDATE_AGENT_URL` | empty | Docker Desktop host updater URL, written by the installer |
-| `UPDATE_AGENT_TOKEN` | empty | Docker Desktop updater token, written by the installer |
-| `CLI2API_UPDATER_SOCKET_DIR` | platform-specific | Host directory mounted read-only for the Linux updater socket |
+| `UPDATE_AGENT_URL` | empty | Docker Desktop host updater URL, written by the updater installer |
+| `UPDATE_AGENT_TOKEN` | empty | Docker Desktop updater token, written by the updater installer |
 
-These are process settings; Compose passes only variables declared in its
-`environment` section. For variables not listed there, add them through a local
-`deploy/docker-compose.override.yml` and include that file with `-f` when running
-Compose directly. An entry in `deploy/.env` alone is not enough.
+`HOST`, `PORT`, and `QODER_DATA_DIR` are fixed by the image (`0.0.0.0`,
+`3010`, `/data`). To pass any of the variables above (or any other
+supported setting), declare it in the `environment` section of your local
+`deploy/docker-compose.override.yml`:
 
-For Qoder stream diagnostics, set `QODER_SSE_DIAGNOSTIC_MODELS` to a model ID
-from `/v1/models` and recreate the container. Diagnostics record event metadata,
-not prompts, responses, tool arguments, or credentials.
+```yaml
+services:
+  qoder-api-proxy:
+    environment:
+      QODER_PROXY_URL: "http://192.168.1.10:7890"
+      UPDATE_GITHUB_TOKEN: "ghp_example"
+```
+
+Then recreate: `docker compose -f deploy/docker-compose.yml up -d`. The
+updater installers write `UPDATE_AGENT_URL` / `UPDATE_AGENT_TOKEN` into the
+override file themselves; keep that file private because it carries the
+updater token.
 
 </details>
 
@@ -194,21 +202,21 @@ macOS + Docker Desktop:
 
 ```bash
 ./deploy/install-updater.sh
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --force-recreate qoder-api-proxy
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.yml up -d --force-recreate qoder-api-proxy
 ```
 
 Linux + systemd:
 
 ```bash
 sudo ./deploy/install-updater.sh
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --force-recreate qoder-api-proxy
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.yml up -d --force-recreate qoder-api-proxy
 ```
 
 Windows + Docker Desktop in Linux-container mode, from the logged-in Docker user's PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\deploy\install-updater.ps1
-docker compose --env-file deploy\.env -f deploy\docker-compose.yml up -d --force-recreate qoder-api-proxy
+docker compose -f deploy\docker-compose.yml -f deploy\docker-compose.override.yml up -d --force-recreate qoder-api-proxy
 ```
 
 The application container never receives the Docker socket. Linux uses a private
@@ -230,6 +238,7 @@ snapshots are retained in `/data/backups`.
 The flow is implemented, but live upgrade / rollback acceptance remains pending.
 Keep a separate database backup before upgrading.
 
-Keep `deploy/.env` private: Docker Desktop mode stores an updater token there.
-Do not remove `qoder-data` or run `docker compose down -v` unless you intend to
+Keep `deploy/docker-compose.override.yml` private: the updater installer
+stores its token there.
+Do not delete `deploy/qoder-data` unless you intend to
 delete the accounts and credentials.

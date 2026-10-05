@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/caigee-cmd/cli2api/internal/providers"
-	"github.com/caigee-cmd/cli2api/internal/providers/qoder"
 )
 
 // Health/probe scheduling. Quota fetch failures must not flip Ready.
@@ -42,43 +41,7 @@ func (m *Manager) refreshOne(ctx context.Context, item Item, forceQuota bool) er
 	if item.RuntimeState == "dead" {
 		return nil
 	}
-	if item.Runtime == string(providers.RuntimeInProcess) || strings.TrimSpace(item.URL) == "" {
-		return m.refreshInProcess(ctx, item)
-	}
-	client := qoder.WorkerClient{HTTP: m.httpClient}
-	health, statusCode, err := client.Health(ctx, item.URL)
-	if err != nil {
-		if statusCode == 0 {
-			ready := false
-			hot := false
-			m.pool.MergeHealth(item.ID, ready, hot, 0, item.Restarts, err.Error())
-			_ = m.store.Observe(ctx, item.ID, "", "error", err.Error(), KindUnavailable)
-			return fmt.Errorf("health account %s: %w", item.ID, err)
-		}
-		return fmt.Errorf("decode account %s health: %w", item.ID, err)
-	}
-	ready := statusCode < 300 && health.OK && health.Ready
-	m.pool.MergeHealth(item.ID, ready, health.Hot, health.InFlight, item.Restarts, health.LastError)
-	if ready || health.Hot {
-		m.resetRestartBackoff(item.ID)
-	}
-	status := "login_required"
-	if ready || health.Hot {
-		status = "ready"
-	} else if health.LastError != "" {
-		status = "error"
-	}
-	if err := m.store.Observe(ctx, item.ID, health.UID, status, health.LastError, ""); err != nil {
-		return err
-	}
-	// Fetch quota after the health/observe path so a quota endpoint outage
-	// never changes readiness. A successful exhausted snapshot may still
-	// keep the account out of request routing.
-	if health.Hot || ready {
-		m.fetchQuota(ctx, item.ID, item.URL, forceQuota)
-		m.fetchAccountModels(ctx, item)
-	}
-	return nil
+	return m.refreshInProcess(ctx, item)
 }
 
 func (m *Manager) refreshInProcess(ctx context.Context, item Item) error {

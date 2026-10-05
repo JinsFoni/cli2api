@@ -3,13 +3,10 @@ package runtime
 import (
 	"context"
 	"log"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/providers"
-	"github.com/caigee-cmd/cli2api/internal/providers/qoder"
 )
 
 // Quota snapshots: pool MergeQuota then Store.SaveQuota. Worker JSON is Qoder-only;
@@ -18,6 +15,18 @@ import (
 func (m *Manager) fetchProviderQuota(ctx context.Context, accountID string, prober providers.AccountProber) {
 	if prober == nil {
 		return
+	}
+	// Providers exposing the full native snapshot (qoder: add-on and
+	// resource-package buckets) persist it directly; the flattened QuotaInfo
+	// would drop those detail fields.
+	if snapshotter, ok := prober.(interface {
+		QuotaSnapshot(ctx context.Context, accountID string, force bool) (*accounts.QuotaSnapshot, error)
+	}); ok {
+		snapshot, err := snapshotter.QuotaSnapshot(ctx, accountID, false)
+		if err == nil && snapshot != nil {
+			m.persistQuota(ctx, accountID, snapshot)
+			return
+		}
 	}
 	info, err := prober.Quota(ctx, accountID)
 	if err != nil || info == nil || !quotaInfoHasWindows(info) {
@@ -130,16 +139,4 @@ func (m *Manager) persistQuota(ctx context.Context, accountID string, quota *Quo
 	if err := m.store.SaveQuota(ctx, accountID, quota); err != nil {
 		log.Printf("persist quota account=%s: %v", accountID, err)
 	}
-}
-
-func (m *Manager) fetchQuota(ctx context.Context, accountID, workerURL string, force bool) {
-	client := qoder.WorkerClient{
-		HTTP:        &http.Client{Timeout: 5 * time.Second},
-		ProxyAPIKey: m.ProxyAPIKey(),
-	}
-	quota, err := client.Quota(ctx, workerURL, force)
-	if err != nil || quota == nil {
-		return
-	}
-	m.persistQuota(ctx, accountID, quota)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/providers"
-	"github.com/caigee-cmd/cli2api/internal/providers/qoder"
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
 
@@ -23,10 +21,7 @@ type providerRegistry = providers.Registry
 type AttemptHook func(accounts.RequestAttempt)
 
 type ChatExecutor struct {
-	Pool      *Pool
-	WorkerKey string
-	// WorkerKeySource, when set, supplies the live key shared by executor copies.
-	WorkerKeySource func() string
+	Pool            *Pool
 	HTTPClient      *http.Client
 	Providers       *providerRegistry
 	OnAttempt       AttemptHook
@@ -255,13 +250,12 @@ func (e ChatExecutor) prepareRouting(ctx context.Context, prefer, providerFilter
 	}
 }
 
-func NewChatExecutor(pool *Pool, workerKey string) ChatExecutor {
+func NewChatExecutor(pool *Pool) ChatExecutor {
 	if pool == nil {
 		pool = NewPool(nil, nil)
 	}
 	return ChatExecutor{
 		Pool:            pool,
-		WorkerKey:       strings.TrimSpace(workerKey),
 		MaxAttempts:     4,
 		SessionAffinity: NewSessionAffinity(defaultSessionAffinityTTL, defaultSessionAffinityCapacity),
 		HTTPClient: &http.Client{
@@ -598,32 +592,6 @@ func (e ChatExecutor) recordAttempt(ctx context.Context, attempt accounts.Reques
 	e.OnAttempt(attempt)
 }
 
-func (e ChatExecutor) newWorkerRequest(ctx context.Context, item Item, payload []byte, prefer string) (*http.Request, error) {
-	account := prefer
-	if account == "" {
-		account = item.ID
-	}
-	key := e.WorkerKey
-	if e.WorkerKeySource != nil {
-		key = e.WorkerKeySource()
-	}
-	return qoder.NewChatRequest(ctx, item.URL, account, RequestIDFromContext(ctx), key, payload)
-}
-
-func classifyWorkerErr(resp *http.Response, body string) Classified {
-	status := 0
-	retryAfter := ""
-	kind := ""
-	failover := ""
-	if resp != nil {
-		status = resp.StatusCode
-		retryAfter = resp.Header.Get("Retry-After")
-		kind = resp.Header.Get("X-Qoder-Error-Kind")
-		failover = resp.Header.Get("X-Qoder-Failover")
-	}
-	return Classify(status, body, retryAfter, kind, failover)
-}
-
 type routeLoop struct {
 	requestID      string
 	prefer         string
@@ -719,10 +687,6 @@ func (l routeLoop) pickFailure(err error) (int, string, string, error) {
 func (e ChatExecutor) ChatNonStream(ctx context.Context, req translate.ChatRequest, prefer, providerFilter string) (result ChatResult, returnErr error) {
 	loop := e.newRouteLoop(ctx, prefer, providerFilter, req)
 	defer func() { result.Routing = loop.routing.Source }()
-	payload, err := json.Marshal(qoder.BuildChatPayload(req, false))
-	if err != nil {
-		return ChatResult{}, err
-	}
 	for loop.index < loop.attempts {
 		item, i, err := loop.pickNext(e, req.Model)
 		if err != nil {
@@ -750,95 +714,9 @@ func (e ChatExecutor) ChatNonStream(ctx context.Context, req translate.ChatReque
 			}
 			return ChatResult{AttemptCount: i + 1, AccountID: item.ID, Provider: item.Provider}, err
 		}
-		headerAccount := loop.headerAccount(item, i)
-		httpReq, err := e.newWorkerRequest(ctx, item, payload, headerAccount)
-		if err != nil {
-			return ChatResult{}, err
-		}
-		started := time.Now()
-		resp, err := e.HTTPClient.Do(httpReq)
-		if err != nil {
-			if requestContextDone(ctx, err) {
-				latency := int(time.Since(started).Milliseconds())
-				e.recordAttempt(ctx, accounts.RequestAttempt{
-					AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: ptrTime(time.Now().UTC()),
-					Status: accounts.AttemptStatusError, ErrorKind: accounts.KindUnavailable, ErrorMessage: err.Error(), LatencyMs: &latency,
-				})
-				return ChatResult{AttemptCount: i + 1, AccountID: item.ID, Provider: item.Provider}, err
-			}
-			classified := Classify(0, err.Error(), "", accounts.KindUnavailable, "")
-			loop.lastErr = NewExecutionError(classified, fmt.Errorf("worker %s request failed: %w", item.ID, err))
-			e.markClassified(item.ID, classified, req.Model)
-			latency := int(time.Since(started).Milliseconds())
-			e.recordAttempt(ctx, accounts.RequestAttempt{
-				AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: ptrTime(time.Now().UTC()),
-				Status: accounts.AttemptStatusFailover, ErrorKind: classified.Kind, ErrorMessage: loop.lastErr.Error(), LatencyMs: &latency,
-			})
-			loop.exclude(item)
-			continue
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		finished := time.Now().UTC()
-		latency := int(finished.Sub(started).Milliseconds())
-		if account := resp.Header.Get("X-Qoder-Account"); account != "" {
-			item.ID = account
-		}
-		if resp.StatusCode >= 300 {
-			msg := strings.TrimSpace(string(body))
-			classified := classifyWorkerErr(resp, msg)
-			loop.lastErr = NewExecutionError(classified, nil)
-			if classified.Kind == accounts.KindModelNotAvailable {
-				e.handleModelAvailabilityFailure(RequestIDFromContext(ctx), "worker_non_stream", item.ID, req.Model, classified)
-			}
-			e.markClassified(item.ID, classified, req.Model)
-			status := accounts.AttemptStatusError
-			if loop.canFailover(classified) {
-				status = accounts.AttemptStatusFailover
-				loop.exclude(item)
-				e.recordAttempt(ctx, accounts.RequestAttempt{
-					AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-					Status: status, HTTPStatus: ptrInt(resp.StatusCode), ErrorKind: classified.Kind,
-					ErrorMessage: truncateErr(msg), LatencyMs: &latency,
-				})
-				continue
-			}
-			e.recordAttempt(ctx, accounts.RequestAttempt{
-				AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-				Status: status, HTTPStatus: ptrInt(resp.StatusCode), ErrorKind: classified.Kind,
-				ErrorMessage: truncateErr(msg), LatencyMs: &latency,
-			})
-			return ChatResult{AttemptCount: i + 1, AccountID: item.ID, Provider: loop.resultProvider(item)}, loop.lastErr
-		}
-		result, err := decodeChatResult(req, body)
-		if err != nil {
-			e.recordAttempt(ctx, accounts.RequestAttempt{
-				AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-				Status: accounts.AttemptStatusError, HTTPStatus: ptrInt(resp.StatusCode),
-				ErrorKind: accounts.KindUnavailable, ErrorMessage: truncateErr(err.Error()), LatencyMs: &latency,
-			})
-			return ChatResult{AttemptCount: i + 1, AccountID: item.ID, Provider: loop.resultProvider(item)}, err
-		}
-		result.AccountID = item.ID
-		result.Provider = loop.resultProvider(item)
-		result.AttemptCount = i + 1
-		result.ReasoningLevel = RequestedReasoningLevel(req)
-		if result.ReasoningLevel != "" {
-			logResolvedReasoning(ctx, "chat_non_stream", item, req.Model, result.ReasoningLevel)
-		}
-		e.observeRouting(&loop.routing, item.ID)
-		e.bindSession(loop.routing, item.ID)
-		e.markOK(item.ID, req.Model)
-		e.recordAttempt(ctx, accounts.RequestAttempt{
-			AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-			Status: accounts.AttemptStatusOK, HTTPStatus: ptrInt(resp.StatusCode), LatencyMs: &latency,
-			PromptTokens: ptrInt(result.PromptTokens), CompletionTokens: ptrInt(result.CompletionTokens),
-			UsageSource: result.UsageSource,
-		})
-		return result, nil
 	}
 	if loop.lastErr == nil {
-		loop.lastErr = fmt.Errorf("no worker accounts available")
+		loop.lastErr = fmt.Errorf("no accounts available")
 	}
 	return ChatResult{AttemptCount: loop.attempts}, loop.lastErr
 }
@@ -1060,19 +938,6 @@ func decodeChatResult(req translate.ChatRequest, body []byte) (ChatResult, error
 	}, nil
 }
 
-func (e ChatExecutor) streamHTTPClient() *http.Client {
-	client := e.HTTPClient
-	if client == nil {
-		return http.DefaultClient
-	}
-	if client.Timeout > 0 {
-		streamClient := *client
-		streamClient.Timeout = 0
-		return &streamClient
-	}
-	return client
-}
-
 func (e ChatExecutor) ChatStreamProxy(ctx context.Context, req translate.ChatRequest, prefer, providerFilter string) (result StreamResult, returnErr error) {
 	return e.chatStreamProxy(ctx, req, nil, prefer, providerFilter, false)
 }
@@ -1132,15 +997,6 @@ func (e ChatExecutor) chatStreamProxy(ctx context.Context, req translate.ChatReq
 		loop.attempts = e.attemptsFor(loop.providerFilter, loop.regionFilter, req.Model, loop.allowed, loop.eligible)
 	}
 	defer func() { result.Routing = loop.routing.Source }()
-	var payload []byte
-	if !preferNativeResponses || native == nil {
-		var err error
-		payload, err = json.Marshal(qoder.BuildChatPayload(req, true))
-		if err != nil {
-			return StreamResult{}, err
-		}
-	}
-	startedAll := time.Now()
 	for loop.index < loop.attempts {
 		item, i, err := loop.pickNext(e, req.Model)
 		if err != nil {
@@ -1168,86 +1024,6 @@ func (e ChatExecutor) chatStreamProxy(ctx context.Context, req translate.ChatReq
 			}
 			return StreamResult{AttemptCount: i + 1, AccountID: item.ID, Provider: item.Provider}, err
 		}
-		headerAccount := loop.headerAccount(item, i)
-		httpReq, err := e.newWorkerRequest(ctx, item, payload, headerAccount)
-		if err != nil {
-			return StreamResult{}, err
-		}
-		started := time.Now()
-		resp, err := e.streamHTTPClient().Do(httpReq)
-		if err != nil {
-			if requestContextDone(ctx, err) {
-				latency := int(time.Since(started).Milliseconds())
-				e.recordAttempt(ctx, accounts.RequestAttempt{
-					AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: ptrTime(time.Now().UTC()),
-					Status: accounts.AttemptStatusError, ErrorKind: accounts.KindUnavailable, ErrorMessage: err.Error(), LatencyMs: &latency,
-				})
-				return StreamResult{AttemptCount: i + 1, AccountID: item.ID, Provider: item.Provider}, err
-			}
-			classified := Classify(0, err.Error(), "", accounts.KindUnavailable, "")
-			loop.lastErr = NewExecutionError(classified, fmt.Errorf("worker %s stream request failed: %w", item.ID, err))
-			e.markClassified(item.ID, classified, req.Model)
-			latency := int(time.Since(started).Milliseconds())
-			e.recordAttempt(ctx, accounts.RequestAttempt{
-				AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: ptrTime(time.Now().UTC()),
-				Status: accounts.AttemptStatusFailover, ErrorKind: classified.Kind, ErrorMessage: loop.lastErr.Error(), LatencyMs: &latency,
-			})
-			loop.exclude(item)
-			continue
-		}
-		if account := resp.Header.Get("X-Qoder-Account"); account != "" {
-			item.ID = account
-		}
-		if resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			msg := strings.TrimSpace(string(body))
-			classified := classifyWorkerErr(resp, msg)
-			loop.lastErr = NewExecutionError(classified, nil)
-			if classified.Kind == accounts.KindModelNotAvailable {
-				e.handleModelAvailabilityFailure(RequestIDFromContext(ctx), "worker_stream", item.ID, req.Model, classified)
-			}
-			e.markClassified(item.ID, classified, req.Model)
-			finished := time.Now().UTC()
-			latency := int(finished.Sub(started).Milliseconds())
-			status := accounts.AttemptStatusError
-			if loop.canFailover(classified) {
-				status = accounts.AttemptStatusFailover
-				loop.exclude(item)
-				e.recordAttempt(ctx, accounts.RequestAttempt{
-					AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-					Status: status, HTTPStatus: ptrInt(resp.StatusCode), ErrorKind: classified.Kind,
-					ErrorMessage: truncateErr(msg), LatencyMs: &latency,
-				})
-				continue
-			}
-			e.recordAttempt(ctx, accounts.RequestAttempt{
-				AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &finished,
-				Status: status, HTTPStatus: ptrInt(resp.StatusCode), ErrorKind: classified.Kind,
-				ErrorMessage: truncateErr(msg), LatencyMs: &latency,
-			})
-			return StreamResult{AttemptCount: i + 1, AccountID: item.ID, Provider: loop.resultProvider(item)}, loop.lastErr
-		}
-		e.markOK(item.ID, req.Model)
-		ttfb := int(time.Since(startedAll).Milliseconds())
-		headerAt := time.Now().UTC()
-		e.recordAttempt(ctx, accounts.RequestAttempt{
-			AttemptIndex: i, AccountID: item.ID, StartedAt: started, FinishedAt: &headerAt,
-			Status: accounts.AttemptStatusOK, HTTPStatus: ptrInt(resp.StatusCode), LatencyMs: &ttfb,
-		})
-		e.observeRouting(&loop.routing, item.ID)
-		resolved := RequestedReasoningLevel(req)
-		if resolved != "" {
-			logResolvedReasoning(ctx, "chat_stream", item, req.Model, resolved)
-		}
-		return StreamResult{
-			Response:       resp,
-			AccountID:      item.ID,
-			Provider:       loop.resultProvider(item),
-			AttemptCount:   i + 1,
-			TTFBMs:         ttfb,
-			ReasoningLevel: resolved,
-		}, nil
 	}
 	if loop.lastErr == nil {
 		loop.lastErr = fmt.Errorf("no worker accounts available")

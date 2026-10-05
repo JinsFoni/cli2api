@@ -1,0 +1,171 @@
+{
+  "region": "global",
+  "endpoint": "https://api1.qoder.sh",
+  "cliVersion": "1.1.32",
+  "recordedAt": "2026-10-05T15:04:17.452Z",
+  "keepTokens": false,
+  "records": [
+    {
+      "input": {
+        "name": "tiny-json",
+        "body": "{\"a\":1}"
+      },
+      "url": "https://api1.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1",
+      "method": "POST",
+      "headers": {
+        "Accept": "text/event-stream",
+        "Authorization": {
+          "redacted": true,
+          "length": 345,
+          "prefix": "Bearer COSY.ey"
+        },
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Cosy-Business-Product": "cli",
+        "Cosy-Business-Type": "agent",
+        "Cosy-ClientType": "5",
+        "Cosy-Data-Policy": "agree",
+        "Cosy-Date": "1791212654",
+        "Cosy-Key": {
+          "redacted": true,
+          "length": 172,
+          "prefix": "J1/4Q4QwcIxf5T"
+        },
+        "Cosy-MachineId": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineToken": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineType": "5",
+        "Cosy-Scene": "assistant",
+        "Cosy-User": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "01a0bf96-a8d4-"
+        },
+        "Cosy-Version": "1.1.32",
+        "Login-Version": "v2",
+        "X-Model-Key": "auto",
+        "X-Model-Source": "system"
+      },
+      "userAgent": null,
+      "bodyLength": 12,
+      "bodySha256": "ea330f0532388a3fd27f88b03967af861eea1e9e5af51fe76519bdeca8312c50",
+      "bodyHead": "ep$$BMn%mYKi"
+    },
+    {
+      "input": {
+        "name": "hello-world",
+        "body": "{\"text\":\"hello world\"}"
+      },
+      "url": "https://api1.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1",
+      "method": "POST",
+      "headers": {
+        "Accept": "text/event-stream",
+        "Authorization": {
+          "redacted": true,
+          "length": 345,
+          "prefix": "Bearer COSY.ey"
+        },
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Cosy-Business-Product": "cli",
+        "Cosy-Business-Type": "agent",
+        "Cosy-ClientType": "5",
+        "Cosy-Data-Policy": "agree",
+        "Cosy-Date": "1791212654",
+        "Cosy-Key": {
+          "redacted": true,
+          "length": 172,
+          "prefix": "J1/4Q4QwcIxf5T"
+        },
+        "Cosy-MachineId": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineToken": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineType": "5",
+        "Cosy-Scene": "assistant",
+        "Cosy-User": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "01a0bf96-a8d4-"
+        },
+        "Cosy-Version": "1.1.32",
+        "Login-Version": "v2",
+        "X-Model-Key": "auto",
+        "X-Model-Source": "system"
+      },
+      "userAgent": null,
+      "bodyLength": 32,
+      "bodySha256": "f78df42b7fd3442974220366d4d1d0aa396a0e87370c115b3d22e7113f6d5370",
+      "bodyHead": "WYuHp*ep$$n*PHFruHq&J(mYKwDxiwBM"
+    },
+    {
+      "input": {
+        "name": "minimal-chat",
+        "body": "{\"request_id\":\"00000000-0000-4000-8000-000000000000\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"stream\":true,\"model_config\":{\"key\":\"auto\",\"source\":\"system\",\"format\":\"openai\"},\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+      },
+      "url": "https://api1.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1",
+      "method": "POST",
+      "headers": {
+        "Accept": "text/event-stream",
+        "Authorization": {
+          "redacted": true,
+          "length": 345,
+          "prefix": "Bearer COSY.ey"
+        },
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Cosy-Business-Product": "cli",
+        "Cosy-Business-Type": "agent",
+        "Cosy-ClientType": "5",
+        "Cosy-Data-Policy": "agree",
+        "Cosy-Date": "1791212654",
+        "Cosy-Key": {
+          "redacted": true,
+          "length": 172,
+          "prefix": "J1/4Q4QwcIxf5T"
+        },
+        "Cosy-MachineId": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineToken": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "434c5134-5258-"
+        },
+        "Cosy-MachineType": "5",
+        "Cosy-Scene": "assistant",
+        "Cosy-User": {
+          "redacted": true,
+          "length": 36,
+          "prefix": "01a0bf96-a8d4-"
+        },
+        "Cosy-Version": "1.1.32",
+        "Login-Version": "v2",
+        "X-Model-Key": "auto",
+        "X-Model-Source": "system"
+      },
+      "userAgent": null,
+      "bodyLength": 308,
+      "bodySha256": "ee6bd9edb41db181628d8782ceda97d1ea55f215dc76a3ef0c25997696dec4e1",
+      "bodyHead": "a*l*K^mxjwDSw*GoKOukKt#xp*l*KbNHFh#Sz*e,f*uSF^N(gEDxV*lLtXBEKbuH"
+    }
+  ]
+}

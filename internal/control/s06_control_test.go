@@ -363,11 +363,6 @@ func (r *fakeRuntime) ReplaceProxyAPIKey(_ context.Context, key string) error {
 	r.proxyAPIKey = key
 	return nil
 }
-func (r *fakeRuntime) WorkerAdmin(_ context.Context, input providers.AdminRequest) (providers.AdminResponse, error) {
-	r.log.add("runtime.WorkerAdmin")
-	r.adminReq = input
-	return providers.AdminResponse{Status: 200}, nil
-}
 func (r *fakeRuntime) Store() accounts.AccountStore {
 	return r.store
 }

@@ -23,7 +23,6 @@ type Runtime interface {
 	CheckinAccount(ctx context.Context, accountID string) (accounts.Account, error)
 	ReloadProxyURL(ctx context.Context, value string) error
 	ReplaceProxyAPIKey(ctx context.Context, key string) error
-	WorkerAdmin(ctx context.Context, input providers.AdminRequest) (providers.AdminResponse, error)
 	Store() accounts.AccountStore
 }
 
@@ -256,7 +255,6 @@ type AccountAdminResult struct {
 
 func (a *Accounts) Admin(ctx context.Context, input AccountAdminAction) (AccountAdminResult, error) {
 	account, storeErr := a.GetStored(ctx, input.AccountID)
-	inProcess := storeErr == nil && account.Provider != "" && account.Provider != "qoder"
 	switch input.Action {
 	case "checkins", "checkin":
 		if storeErr != nil {
@@ -267,31 +265,22 @@ func (a *Accounts) Admin(ctx context.Context, input AccountAdminAction) (Account
 		}
 		return AccountAdminResult{Kind: input.Action}, nil
 	case "login/device":
-		if inProcess {
-			session, err := a.StartLogin(ctx, input.AccountID)
-			if err != nil {
-				return AccountAdminResult{}, err
-			}
-			return AccountAdminResult{Kind: "login_start", Session: session, LoginStatus: "pending"}, nil
+		session, err := a.StartLogin(ctx, input.AccountID)
+		if err != nil {
+			return AccountAdminResult{}, err
 		}
-		return a.workerAdmin(ctx, input)
+		return AccountAdminResult{Kind: "login_start", Session: session, LoginStatus: "pending"}, nil
 	case "login/status":
-		if inProcess {
-			done, message, err := a.PollLogin(ctx, input.AccountID)
-			if err != nil {
-				return AccountAdminResult{}, err
-			}
-			status := "pending"
-			if done {
-				status = "ok"
-			}
-			return AccountAdminResult{Kind: "login_status", LoginDone: done, LoginStatus: status, LoginMsg: message}, nil
+		done, message, err := a.PollLogin(ctx, input.AccountID)
+		if err != nil {
+			return AccountAdminResult{}, err
 		}
-		return a.workerAdmin(ctx, input)
+		status := "pending"
+		if done {
+			status = "ok"
+		}
+		return AccountAdminResult{Kind: "login_status", LoginDone: done, LoginStatus: status, LoginMsg: message}, nil
 	case "login/callback":
-		if !inProcess {
-			return AccountAdminResult{}, operationError("not_found", "unknown account action")
-		}
 		if err := a.CompleteLogin(ctx, input.AccountID, input.CallbackURL); err != nil {
 			return AccountAdminResult{}, err
 		}
@@ -300,35 +289,26 @@ func (a *Accounts) Admin(ctx context.Context, input AccountAdminAction) (Account
 		if storeErr != nil {
 			return AccountAdminResult{}, storeErr
 		}
-		if inProcess {
-			var payload struct {
-				PAT string `json:"pat"`
+		var payload struct {
+			PAT string `json:"pat"`
+		}
+		if err := json.Unmarshal(input.Body, &payload); err != nil {
+			return AccountAdminResult{}, operationError("invalid_request", err.Error())
+		}
+		// Qoder runs the native PAT flow (jobToken exchange + userinfo) and
+		// persists the CLI-shaped credential blob; other providers use the
+		// generic credential-importer path.
+		if account.Provider == "qoder" {
+			if err := a.LoginPATNative(ctx, input.AccountID, payload.PAT); err != nil {
+				return AccountAdminResult{}, err
 			}
-			if err := json.Unmarshal(input.Body, &payload); err != nil {
-				return AccountAdminResult{}, operationError("invalid_request", err.Error())
-			}
+		} else {
 			if err := a.LoginPAT(ctx, input.AccountID, payload.PAT); err != nil {
 				return AccountAdminResult{}, err
 			}
-			return AccountAdminResult{Kind: "login_complete", LoginStatus: "ok", LoginMsg: "login complete"}, nil
 		}
-		return a.workerAdmin(ctx, input)
-	case "rewarm":
-		if inProcess {
-			return AccountAdminResult{}, operationError("not_found", "unknown account action")
-		}
-		return a.workerAdmin(ctx, input)
+		return AccountAdminResult{Kind: "login_complete", LoginStatus: "ok", LoginMsg: "login complete"}, nil
 	default:
 		return AccountAdminResult{}, operationError("not_found", "unknown account action")
 	}
-}
-
-func (a *Accounts) workerAdmin(ctx context.Context, input AccountAdminAction) (AccountAdminResult, error) {
-	worker, err := a.runtime.WorkerAdmin(ctx, providers.AdminRequest{
-		AccountID: input.AccountID, Action: input.Action, Method: input.Method, ContentType: input.ContentType, Body: input.Body,
-	})
-	if err != nil {
-		return AccountAdminResult{}, err
-	}
-	return AccountAdminResult{Kind: "worker", Worker: worker}, nil
 }

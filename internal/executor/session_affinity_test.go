@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/caigee-cmd/cli2api/internal/accounts"
+	"github.com/caigee-cmd/cli2api/internal/providers"
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
 
@@ -61,9 +62,13 @@ func TestChatNonStreamSessionAffinityAndPinPriority(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	ctx := WithSessionKey(context.Background(), "session-1")
 	req := translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}}
 
@@ -97,9 +102,15 @@ func TestChatNonStreamSessionAffinityEscapesUnknownCatalogOnLaterModel(t *testin
 	defer workbuddy.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "devin", URL: devin.URL, Provider: "devin", Region: "global", Runtime: "child_process", Models: []string{"gpt-5-6-sol"}, ProvenModels: []string{"gpt-5-6-sol"}})
-	pool.Upsert(Item{ID: "workbuddy", URL: workbuddy.URL, Provider: "workbuddy", Region: "global", Runtime: "child_process", Models: []string{"deepseek-v4.1-flash"}})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "devin", URL: devin.URL, Provider: "devin", Region: "global", Runtime: "in_process", Models: []string{"gpt-5-6-sol"}, ProvenModels: []string{"gpt-5-6-sol"}})
+	pool.Upsert(Item{ID: "workbuddy", URL: workbuddy.URL, Provider: "workbuddy", Region: "global", Runtime: "in_process", Models: []string{"deepseek-v4.1-flash"}})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
+	executor.Providers.Register(providers.Adapter{ID: "devin", Chat: bridge})
+	executor.Providers.Register(providers.Adapter{ID: "workbuddy", Chat: bridge})
 	executor.SessionAffinity.Bind("compact-session", "devin")
 
 	result, err := executor.ChatNonStream(WithSessionKey(context.Background(), "compact-session"), translate.ChatRequest{
@@ -124,11 +135,15 @@ func TestChatNonStreamSessionAffinityEscapesWithinBoundRegion(t *testing.T) {
 	defer cn.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "cn", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "child_process"})
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "cn", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "in_process"})
 	pool.MarkDown("a", time.Hour, "cooling")
-	executor := NewChatExecutor(pool, "")
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	executor.SessionAffinity.Bind("session-1", "a")
 
 	result, err := executor.ChatNonStream(WithSessionKey(context.Background(), "session-1"), translate.ChatRequest{
@@ -158,9 +173,13 @@ func TestChatStreamProxySessionAffinity(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	ctx := WithSessionKey(context.Background(), "stream-session")
 	req := translate.ChatRequest{Model: "glm-5.2", Stream: true, Messages: []translate.ChatMessage{{Role: "user", Content: "hi"}}}
 
@@ -192,9 +211,13 @@ func TestChatNonStreamContentSessionAffinityWithoutExplicitKey(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	firstReq := translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: "plan the refactor"}}}
 	laterReq := translate.ChatRequest{
 		Model: "glm-5.2",
@@ -232,9 +255,13 @@ func TestChatNonStreamImageOnlyContentSessionAffinity(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	image := []any{map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/cat.png"}}}
 	firstReq := translate.ChatRequest{Model: "glm-5.2", Messages: []translate.ChatMessage{{Role: "user", Content: image}}}
 	laterReq := translate.ChatRequest{
@@ -277,9 +304,13 @@ func TestChatStreamProxyContentSessionAffinityWithoutExplicitKey(t *testing.T) {
 	defer b.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	firstReq := translate.ChatRequest{Model: "glm-5.2", Stream: true, Messages: []translate.ChatMessage{{Role: "user", Content: "plan the refactor"}}}
 	laterReq := translate.ChatRequest{
 		Model:  "glm-5.2",
@@ -324,10 +355,14 @@ func TestChatNonStreamSessionAffinityRateLimitEscapesSameRegion(t *testing.T) {
 	defer cn.Close()
 
 	pool := NewPool(nil, nil)
-	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "child_process"})
-	pool.Upsert(Item{ID: "cn", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "child_process"})
-	executor := NewChatExecutor(pool, "")
+	pool.Upsert(Item{ID: "a", URL: a.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "b", URL: b.URL, Provider: "qoder", Region: "global", Runtime: "in_process"})
+	pool.Upsert(Item{ID: "cn", URL: cn.URL, Provider: "qoder", Region: "cn", Runtime: "in_process"})
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	executor.SessionAffinity.Bind("session-429", "a")
 
 	result, err := executor.ChatNonStream(WithSessionKey(context.Background(), "session-429"), translate.ChatRequest{
@@ -350,14 +385,18 @@ func TestChatNonStreamSessionAffinityHonorsProvenModels(t *testing.T) {
 
 	pool := NewPool(nil, nil)
 	pool.Upsert(Item{
-		ID: "a", URL: server.URL, Provider: "qoder", Region: "global", Runtime: "child_process",
+		ID: "a", URL: server.URL, Provider: "qoder", Region: "global", Runtime: "in_process",
 		Models: []string{"hy3"}, ProvenModels: []string{"glm-5.2"},
 	})
 	pool.Upsert(Item{
-		ID: "b", URL: other.URL, Provider: "qoder", Region: "global", Runtime: "child_process",
+		ID: "b", URL: other.URL, Provider: "qoder", Region: "global", Runtime: "in_process",
 		Models: []string{"glm-5.2"},
 	})
-	executor := NewChatExecutor(pool, "")
+	executor := NewChatExecutor(pool)
+	bridge := newFakeChatViaHTTP(nil)
+	bridge.pool = pool
+	executor.Providers = providers.NewRegistry()
+	executor.Providers.Register(providers.Adapter{ID: "qoder", Chat: bridge})
 	executor.SessionAffinity.Bind("session-proven", "a")
 
 	result, err := executor.ChatNonStream(WithSessionKey(context.Background(), "session-proven"), translate.ChatRequest{

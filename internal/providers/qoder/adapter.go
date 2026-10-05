@@ -3,8 +3,8 @@ package qoder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/providers"
+	"github.com/caigee-cmd/cli2api/internal/proxy"
 	"github.com/caigee-cmd/cli2api/internal/translate"
 )
 
@@ -26,23 +27,42 @@ type Client struct {
 	locate      func(accountID string) (string, bool)
 	proxyAPIKey func() string
 
+	// nativeStore binds the in-process control plane (check-in, native quota,
+	// credential probing) to the account store. Nil keeps the pure worker
+	// behavior for callers that only need chat routing.
+	nativeStore NativeStore
+
+	// transports caches proxy transports for direct control-plane calls.
+	transports proxy.TransportCache
+
 	modelsHTTP *http.Client
 	healthHTTP *http.Client
 	quotaHTTP  *http.Client
 	adminHTTP  *http.Client
 	chatHTTP   *http.Client
+	nativeBase *http.Client
+
+	// endpointsOverride replaces the openapi hosts for native control-plane
+	// calls; set only by tests.
+	endpointsOverride map[string]nativeEndpoints
+
+	// identities caches built chat identities (runtime fields) per account;
+	// nil until the first native chat.
+	identities *identityCache
 
 	loginTimeout  time.Duration
 	loginInterval time.Duration
 }
 
-func NewClient() *Client {
+func NewClient(store NativeStore) *Client {
 	return &Client{
+		nativeStore:   store,
 		modelsHTTP:    &http.Client{Timeout: 15 * time.Second},
 		healthHTTP:    &http.Client{Timeout: 2 * time.Second},
 		quotaHTTP:     &http.Client{Timeout: 5 * time.Second},
 		adminHTTP:     &http.Client{Timeout: 120 * time.Second},
 		chatHTTP:      &http.Client{Timeout: 120 * time.Second},
+		nativeBase:    &http.Client{Timeout: 15 * time.Second},
 		loginTimeout:  90 * time.Second,
 		loginInterval: 200 * time.Millisecond,
 	}
@@ -82,31 +102,18 @@ func (c *Client) SetLoginWait(timeout, interval time.Duration) {
 }
 
 func (c *Client) Adapter() providers.Adapter {
-	// Probe/Quota stay off the registered bundle in S09: empty-URL Qoder
-	// items must not enter refreshInProcess just because an Adapter exists.
-	// Callers that need those methods use the Client directly.
+	// Check-in, quota, models, and readiness are all native now (direct
+	// Bearer/COSY HTTP + stored credential). Probe for qoder never fabricates
+	// model availability: routeBaseMatches still requires a catalog or proven
+	// model hit for the concrete request.
 	return providers.Adapter{
 		ID:      "qoder",
 		Login:   c,
 		Chat:    c,
 		Models:  c,
+		Prober:  c,
 		Checkin: c,
 	}
-}
-
-func (c *Client) lookup(accountID string) (string, error) {
-	c.mu.RLock()
-	locate := c.locate
-	c.mu.RUnlock()
-	if locate == nil {
-		return "", ErrAccountNotRunning
-	}
-	workerURL, ok := locate(accountID)
-	workerURL = strings.TrimRight(strings.TrimSpace(workerURL), "/")
-	if !ok || workerURL == "" {
-		return "", ErrAccountNotRunning
-	}
-	return workerURL, nil
 }
 
 func (c *Client) key() string {
@@ -119,34 +126,8 @@ func (c *Client) key() string {
 	return fn()
 }
 
-func (c *Client) worker(httpClient *http.Client) WorkerClient {
-	return WorkerClient{HTTP: httpClient, ProxyAPIKey: c.key()}
-}
-
-func (c *Client) accountWorker(httpClient *http.Client, accountID string) WorkerClient {
-	return WorkerClient{HTTP: httpClient, ProxyAPIKey: c.key(), AccountID: accountID}
-}
-
 func (c *Client) Models(ctx context.Context, accountID string) ([]providers.ModelInfo, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.RLock()
-	httpClient := c.modelsHTTP
-	c.mu.RUnlock()
-	entries, status, rawBody, err := c.worker(httpClient).Models(ctx, workerURL, false)
-	if err != nil {
-		return nil, err
-	}
-	if status >= 300 {
-		snippet := strings.TrimSpace(rawBody)
-		if len(snippet) > 512 {
-			snippet = snippet[:512]
-		}
-		return nil, HTTPStatusError{Op: "models", Status: status, Body: snippet}
-	}
-	return ModelInfos(entries), nil
+	return c.FetchModelsNative(ctx, accountID)
 }
 
 func numberField(entry map[string]any, key string) int {
@@ -194,10 +175,32 @@ func intSliceField(entry map[string]any, key string) ([]int, bool) {
 	return out, len(out) > 0
 }
 
+// largestContextWindow is the largest selectable window, when Qoder
+// advertises more than the default (`available_context_windows`).
+func largestContextWindow(entry map[string]any) (int, bool) {
+	windows, ok := intSliceField(entry, "available_context_windows")
+	if !ok {
+		return 0, false
+	}
+	largest := 0
+	for _, window := range windows {
+		if window > largest {
+			largest = window
+		}
+	}
+	if largest <= 0 {
+		return 0, false
+	}
+	return largest, true
+}
+
 // contextWindowDefault is the model's default context window: Qoder's
 // `default_context_window` when present, else the legacy `context_length`.
 func contextWindowDefault(entry map[string]any) int {
-	if window, ok := qoderDefaultContextWindow(entry); ok {
+	if window, ok := numberFieldValue(entry, "default_context_window"); ok && window > 0 {
+		return window
+	}
+	if window, ok := numberFieldValue(entry, "context_length"); ok && window > 0 {
 		return window
 	}
 	return 0
@@ -227,7 +230,7 @@ func ModelInfos(entries []map[string]any) []providers.ModelInfo {
 				Images:        true,
 			},
 		}
-		if maxWindow, ok := qoderLargestContextWindow(entry); ok {
+		if maxWindow, ok := largestContextWindow(entry); ok {
 			if maxWindow > info.Capabilities.ContextWindow {
 				info.Capabilities.ContextWindowMax = maxWindow
 			}
@@ -329,25 +332,17 @@ func CatalogIDsFromInfos(models []providers.ModelInfo) []string {
 }
 
 func (c *Client) Probe(ctx context.Context, accountID string) (providers.AccountHealth, error) {
-	workerURL, err := c.lookup(accountID)
+	// Native readiness: the credential must decode and the chat identity
+	// (runtime fields, COSY pair) must assemble. Model routing still requires
+	// a catalog hit, so this never fabricates model availability.
+	account, cred, err := c.resolvedCredential(ctx, accountID)
 	if err != nil {
-		return providers.AccountHealth{}, err
+		return providers.AccountHealth{LastError: err.Error()}, nil
 	}
-	c.mu.RLock()
-	httpClient := c.healthHTTP
-	c.mu.RUnlock()
-	health, status, err := WorkerClient{HTTP: httpClient}.Health(ctx, workerURL)
-	if err != nil {
-		return providers.AccountHealth{}, err
+	if _, err := buildChatIdentity(account, cred); err != nil {
+		return providers.AccountHealth{LastError: err.Error()}, nil
 	}
-	ready := status < 300 && health.OK && health.Ready
-	return providers.AccountHealth{
-		Ready:     ready,
-		Hot:       health.Hot,
-		UID:       health.UID,
-		InFlight:  health.InFlight,
-		LastError: health.LastError,
-	}, nil
+	return providers.AccountHealth{Ready: true, Hot: true, UID: cred.UID}, nil
 }
 
 func (c *Client) Quota(ctx context.Context, accountID string) (*providers.QuotaInfo, error) {
@@ -367,183 +362,44 @@ func (c *Client) Quota(ctx context.Context, accountID string) (*providers.QuotaI
 }
 
 func (c *Client) QuotaSnapshot(ctx context.Context, accountID string, force bool) (*accounts.QuotaSnapshot, error) {
-	workerURL, err := c.lookup(accountID)
+	return c.nativeQuotaSnapshot(ctx, accountID)
+}
+
+// errNativeUnavailable marks structural reasons the in-process quota path
+// cannot even be attempted; callers may fall back to the worker for these.
+var errNativeUnavailable = errors.New("qoder native quota unavailable")
+
+func (c *Client) nativeQuotaSnapshot(ctx context.Context, accountID string) (*accounts.QuotaSnapshot, error) {
+	if c.nativeStore == nil {
+		return nil, fmt.Errorf("%w: store not bound", errNativeUnavailable)
+	}
+	account, cred, err := c.resolvedCredential(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errNativeUnavailable, err)
+	}
+	if _, ok := c.endpoint(account.ProviderRegion); !ok {
+		return nil, fmt.Errorf("%w: region %q has no openapi endpoint", errNativeUnavailable, account.ProviderRegion)
+	}
+	httpClient, err := c.nativeHTTP(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errNativeUnavailable, err)
+	}
+	quota, err := c.fetchNativeQuota(ctx, httpClient, account, cred)
 	if err != nil {
 		return nil, err
 	}
-	c.mu.RLock()
-	httpClient := c.quotaHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
-	return c.worker(httpClient).Quota(ctx, workerURL, force)
+	return quota.snapshot(), nil
 }
 
+// StartLogin starts the native device-code login flow for an account. The
+// device flow (worker-era) is retired; PAT login is the supported path, but
+// StartLogin/PollLogin remain for providers.Login interface completeness.
 func (c *Client) StartLogin(ctx context.Context, accountID string) (providers.LoginSession, error) {
-	c.mu.RLock()
-	timeout := c.loginTimeout
-	interval := c.loginInterval
-	adminHTTP := c.adminHTTP
-	locate := c.locate
-	c.mu.RUnlock()
-	workerURL, err := WaitForAuthManager(ctx, func() (string, bool) {
-		if locate == nil {
-			return "", false
-		}
-		return locate(accountID)
-	}, timeout, interval)
-	if err != nil {
-		return providers.LoginSession{}, err
-	}
-	status, _, body, err := c.accountWorker(adminHTTP, accountID).Admin(ctx, workerURL, http.MethodPost, "/admin/login/device", "", nil)
-	if err != nil {
-		return providers.LoginSession{}, err
-	}
-	if status >= 300 {
-		return providers.LoginSession{}, HTTPStatusError{Op: "login", Status: status, Body: strings.TrimSpace(string(body))}
-	}
-	var parsed struct {
-		AuthURL string `json:"authUrl"`
-	}
-	_ = json.Unmarshal(body, &parsed)
-	return providers.LoginSession{AuthURL: parsed.AuthURL}, nil
+	return providers.LoginSession{}, fmt.Errorf("qoder device login is retired; use PAT login")
 }
 
 func (c *Client) PollLogin(ctx context.Context, accountID string) (bool, string, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return false, "", err
-	}
-	c.mu.RLock()
-	adminHTTP := c.adminHTTP
-	c.mu.RUnlock()
-	status, _, body, err := c.accountWorker(adminHTTP, accountID).Admin(ctx, workerURL, http.MethodGet, "/admin/login/status", "", nil)
-	if err != nil {
-		return false, "", err
-	}
-	if status >= 300 {
-		return false, "", HTTPStatusError{Op: "login", Status: status, Body: strings.TrimSpace(string(body))}
-	}
-	var parsed struct {
-		Login struct {
-			Status  string `json:"status"`
-			Message string `json:"message"`
-		} `json:"login"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false, "", err
-	}
-	return parsed.Login.Status == "ok", parsed.Login.Message, nil
-}
-
-func (c *Client) ChatNonStream(ctx context.Context, accountID string, req translate.ChatRequest) (providers.ChatOutcome, error) {
-	httpReq, resolved, err := c.newChatRequest(ctx, accountID, req, false)
-	if err != nil {
-		return providers.ChatOutcome{}, err
-	}
-	c.mu.RLock()
-	httpClient := c.chatHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return providers.ChatOutcome{}, TransportError{Err: err}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return providers.ChatOutcome{}, HTTPStatusError{Op: "chat", Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
-	}
-	outcome, err := decodeChatOutcome(req.Model, body)
-	if err != nil {
-		return providers.ChatOutcome{}, err
-	}
-	outcome.ReasoningLevel = resolved.ReasoningLevel
-	return outcome, nil
-}
-
-func (c *Client) ChatStream(ctx context.Context, accountID string, req translate.ChatRequest) (*http.Response, providers.ResolvedChat, error) {
-	httpReq, resolved, err := c.newChatRequest(ctx, accountID, req, true)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	c.mu.RLock()
-	httpClient := c.chatHTTP
-	c.mu.RUnlock()
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	if httpClient.Timeout > 0 {
-		cloned := *httpClient
-		cloned.Timeout = 0
-		httpClient = &cloned
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, TransportError{Err: err}
-	}
-	return resp, resolved, nil
-}
-
-func (c *Client) newChatRequest(ctx context.Context, accountID string, req translate.ChatRequest, stream bool) (*http.Request, providers.ResolvedChat, error) {
-	workerURL, err := c.lookup(accountID)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	payload, err := json.Marshal(BuildChatPayload(req, stream))
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	httpReq, err := NewChatRequest(ctx, workerURL, accountID, "", c.key(), payload)
-	if err != nil {
-		return nil, providers.ResolvedChat{}, err
-	}
-	return httpReq, providers.ResolvedChat{ReasoningLevel: resolvedReasoningLevel(req)}, nil
-}
-
-// resolvedReasoningLevel surfaces the reasoning level that qoder forwards to
-// the worker. Qoder does not clamp; the worker applies its own model policy,
-// so this is the normalized client value (or stored default) only.
-func resolvedReasoningLevel(req translate.ChatRequest) string {
-	if len(req.ReasoningEffort) > 0 {
-		var value any
-		if json.Unmarshal(req.ReasoningEffort, &value) == nil {
-			switch typed := value.(type) {
-			case string:
-				return providers.NormalizeReasoningLevel(typed)
-			case map[string]any:
-				for _, key := range []string{"effort", "level", "type"} {
-					if text, ok := typed[key].(string); ok {
-						if level := providers.NormalizeReasoningLevel(text); level != "" {
-							return level
-						}
-					}
-				}
-			}
-		}
-	}
-	if req.EnableThinking != nil {
-		if *req.EnableThinking {
-			return "medium"
-		}
-		return "none"
-	}
-	if req.EnableReasoning != nil {
-		if *req.EnableReasoning {
-			return "medium"
-		}
-		return "none"
-	}
-	if req.IsReasoning != nil {
-		if *req.IsReasoning {
-			return "medium"
-		}
-		return "none"
-	}
-	return ""
+	return false, "", fmt.Errorf("qoder device login is retired; use PAT login")
 }
 
 func BuildChatPayload(req translate.ChatRequest, stream bool) map[string]any {
@@ -603,58 +459,6 @@ func BuildChatPayload(req translate.ChatRequest, stream bool) map[string]any {
 		payload["tool_choice"] = json.RawMessage(req.ToolChoice)
 	}
 	return payload
-}
-
-func decodeChatOutcome(fallbackModel string, body []byte) (providers.ChatOutcome, error) {
-	var parsed struct {
-		Model string `json:"model"`
-		Usage struct {
-			PromptTokens     int      `json:"prompt_tokens"`
-			CompletionTokens int      `json:"completion_tokens"`
-			CacheReadTokens  *int     `json:"cache_read_tokens"`
-			CacheWriteTokens *int     `json:"cache_write_tokens"`
-			Source           string   `json:"source"`
-			Credits          *float64 `json:"credits"`
-		} `json:"usage"`
-		Choices []struct {
-			FinishReason string `json:"finish_reason"`
-			Message      struct {
-				Content          string          `json:"content"`
-				ReasoningContent string          `json:"reasoning_content"`
-				ToolCalls        json.RawMessage `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return providers.ChatOutcome{}, fmt.Errorf("decode worker response: %w", err)
-	}
-	outcome := providers.ChatOutcome{
-		Model:            parsed.Model,
-		PromptTokens:     parsed.Usage.PromptTokens,
-		CompletionTokens: parsed.Usage.CompletionTokens,
-		CacheReadTokens:  parsed.Usage.CacheReadTokens,
-		CacheWriteTokens: parsed.Usage.CacheWriteTokens,
-		UsageSource:      parsed.Usage.Source,
-		Credits:          parsed.Usage.Credits,
-		FinishReason:     "stop",
-	}
-	if outcome.Model == "" {
-		outcome.Model = fallbackModel
-	}
-	if outcome.UsageSource == "" {
-		outcome.UsageSource = "estimate"
-	}
-	if len(parsed.Choices) > 0 {
-		outcome.Content = parsed.Choices[0].Message.Content
-		outcome.Reasoning = parsed.Choices[0].Message.ReasoningContent
-		outcome.ToolCalls = parsed.Choices[0].Message.ToolCalls
-		if parsed.Choices[0].FinishReason != "" {
-			outcome.FinishReason = parsed.Choices[0].FinishReason
-		} else if len(outcome.ToolCalls) > 0 && string(outcome.ToolCalls) != "null" {
-			outcome.FinishReason = "tool_calls"
-		}
-	}
-	return outcome, nil
 }
 
 func stringField(entry map[string]any, keys ...string) string {

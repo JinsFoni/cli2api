@@ -2,13 +2,13 @@ package runtime_test
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/caigee-cmd/cli2api/internal/accounts"
 	"github.com/caigee-cmd/cli2api/internal/executor"
 	accountruntime "github.com/caigee-cmd/cli2api/internal/runtime"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,8 +24,7 @@ func TestManagerDoesNotSpawnDaemonForInProcessProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	starter := &fakeStarter{}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), BasePort: 32300}, store, starter)
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	if err := manager.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +36,8 @@ func TestManagerDoesNotSpawnDaemonForInProcessProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(starter.accounts) != 0 {
-		t.Fatalf("in-process provider spawned %d daemons", len(starter.accounts))
+	if item, ok := manager.Pool().ByID(account.ID); !ok || item.Runtime != "in_process" {
+		t.Fatalf("in-process provider pool item = %+v ok=%v", item, ok)
 	}
 	item, ok := manager.Pool().ByID(account.ID)
 	if !ok || item.Provider != "workbuddy" || item.Runtime != "in_process" {
@@ -49,13 +48,15 @@ func TestManagerDoesNotSpawnDaemonForInProcessProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(starter.accounts) != 1 || starter.accounts[0].ID != qoder.ID {
-		t.Fatalf("qoder should spawn exactly one daemon, started=%+v", starter.accounts)
+	// Native path: qoder is in-process like workbuddy, no daemon spawn.
+	if item, ok := manager.Pool().ByID(account.ID); !ok || item.Runtime != "in_process" {
+		t.Fatalf("qoder pool item = %+v ok=%v", item, ok)
 	}
 	qItem, ok := manager.Pool().ByID(qoder.ID)
-	if !ok || qItem.Provider != "qoder" || qItem.Runtime != "child_process" {
+	if !ok || qItem.Provider != "qoder" || qItem.Runtime != "in_process" {
 		t.Fatalf("qoder pool item = %+v ok=%v", qItem, ok)
 	}
+	_ = qoder
 }
 
 type fakeProber struct {
@@ -106,7 +107,7 @@ func TestManagerRefreshUsesInProcessProber(t *testing.T) {
 	registry := providers.NewRegistry()
 	registry.Register(providers.Adapter{ID: "workbuddy", Prober: prober})
 
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.SetProviders(registry)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "workbuddy", Runtime: "in_process"})
 
@@ -190,7 +191,7 @@ func TestManagerRefreshPersistsQuotaWindows(t *testing.T) {
 	}
 	registry := providers.NewRegistry()
 	registry.Register(providers.Adapter{ID: "devin", Prober: prober})
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.SetProviders(registry)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "devin", Runtime: "in_process"})
 	if err := manager.RefreshAll(ctx, false); err != nil {
@@ -239,7 +240,7 @@ func TestManagerRefreshSkipsEmptyURLWithoutProber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
 	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "workbuddy", Runtime: "in_process"})
 	if err := manager.RefreshAll(ctx, false); err != nil {
 		t.Fatalf("refresh without prober must be a no-op, got %v", err)
@@ -252,46 +253,52 @@ func TestManagerRefreshSkipsEmptyURLWithoutProber(t *testing.T) {
 
 func TestManagerRefreshUsesQoderAdapterCatalog(t *testing.T) {
 	var modelHits int
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "ready": true, "hot": true, "uid": "qoder-uid-1"})
-		case "/admin/quota":
-			http.Error(w, "quota unused", http.StatusBadGateway)
-		case "/admin/models":
+		case "/algo/api/v2/model/list":
 			modelHits++
-			if r.Header.Get("Authorization") != "Bearer proxy-key" {
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer COSY.") {
 				t.Errorf("models auth = %q", r.Header.Get("Authorization"))
 			}
-			if r.Header.Get("X-Qoder-Account") != "" {
-				t.Errorf("runtime catalog sent X-Qoder-Account = %q", r.Header.Get("X-Qoder-Account"))
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
-				{"id": "hy3", "mapped_key": "hy3", "display_name": "HY3"},
-				{"id": "glm-5.2", "mapped_key": "gmodel", "display_name": "GLM-5.2"},
-			}})
+			_, _ = w.Write([]byte(`{"chat":[
+				{"key":"hy3","display_name":"HY3","source":"system","enable":true},
+				{"key":"gmodel","display_name":"GLM-5.2","source":"system","enable":true}
+			]}`))
+		case "/api/v2/quota/usage":
+			http.Error(w, "quota unused", http.StatusBadGateway)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer worker.Close()
+	defer upstream.Close()
 	ctx := context.Background()
 	store, err := sqlstore.OpenStore(filepath.Join(t.TempDir(), "qoder.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Catalog", Enabled: false})
+	account, err := store.Create(ctx, accounts.CreateAccount{Name: "Catalog", Provider: "qoder", Region: "cn", Enabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir(), ProxyAPIKey: "proxy-key"}, store, &fakeStarter{})
-	client := qoder.NewClient()
-	client.Bind(manager.AccountURL, manager.ProxyAPIKey)
+	if err := store.SaveCredential(ctx, account.ID, "native", accounts.NativeCredential{
+		UserBlob:  []byte(`{"access_token":"drt-test","refresh_token":"jrt-test","uid":"qoder-uid-1","name":"tester","expire_time":1893456000000}`),
+		MachineID: "qoder-machine-id-0123456789",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
+	client := qoder.NewClient(store)
+	client.Bind(func(string) (string, bool) { return "", false }, func() string { return "" })
+	client.SetHTTP(upstream.Client())
+	client.SetEndpoints(map[string]qoder.NativeEndpoints{
+		"cn":     {Base: upstream.URL, Origin: upstream.URL},
+		"global": {Base: upstream.URL, Origin: upstream.URL},
+	})
 	registry := providers.NewRegistry()
 	registry.Register(client.Adapter())
 	manager.SetProviders(registry)
-	manager.Pool().Upsert(executor.Item{ID: account.ID, URL: worker.URL, Provider: "qoder", Runtime: "child_process"})
+	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "in_process"})
 	if err := manager.RefreshAll(ctx, false); err != nil {
 		t.Fatal(err)
 	}
@@ -315,18 +322,23 @@ func TestQoderAdapterRegistrationDoesNotProbeEmptyURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store, &fakeStarter{})
-	client := qoder.NewClient()
+	manager := accountruntime.NewManager(accountruntime.ManagerConfig{DataDir: t.TempDir()}, store)
+	client := qoder.NewClient(nil)
 	client.Bind(manager.AccountURL, manager.ProxyAPIKey)
 	registry := providers.NewRegistry()
 	registry.Register(client.Adapter())
 	manager.SetProviders(registry)
-	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "child_process"})
+	manager.Pool().Upsert(executor.Item{ID: account.ID, Provider: "qoder", Runtime: "in_process"})
 	if err := manager.RefreshAll(ctx, false); err != nil {
-		t.Fatalf("empty-URL qoder with Adapter must stay a no-op, got %v", err)
+		t.Fatalf("empty-URL qoder with Adapter must not fail refresh, got %v", err)
 	}
 	item, _ := manager.Pool().ByID(account.ID)
-	if item.Ready != nil || item.LastError != "" || item.Models != nil {
-		t.Fatalf("pool should be untouched, got %+v", item)
+	// Pool-routed probe never flips a starting/URL-less item to Ready: chat
+	// could not be served, so the item must stay unroutable.
+	if item.Ready != nil && *item.Ready {
+		t.Fatalf("empty-URL qoder must not report ready, got %+v", item)
+	}
+	if item.Models != nil {
+		t.Fatalf("pool models must stay untouched, got %+v", item)
 	}
 }

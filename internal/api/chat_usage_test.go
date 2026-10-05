@@ -279,7 +279,7 @@ func TestRelayOpenAIStreamPreservesTypedReadError(t *testing.T) {
 	}
 	pool := executor.NewPool(nil, nil)
 	pool.Upsert(executor.Item{ID: "devin-account"})
-	executor.NewChatExecutor(pool, "").ObserveStreamFailure("devin-account", err, "swe-2")
+	executor.NewChatExecutor(pool).ObserveStreamFailure("devin-account", err, "swe-2")
 	item, _ := pool.ByID("devin-account")
 	if item.LastKind != "" || !item.DownUntil.IsZero() {
 		t.Fatalf("invalid request cooled account: kind=%q down=%v", item.LastKind, item.DownUntil)
@@ -302,7 +302,7 @@ func TestRelayOpenAIStreamWrapsUnknownReadError(t *testing.T) {
 	}
 	pool := executor.NewPool(nil, nil)
 	pool.Upsert(executor.Item{ID: "devin-account"})
-	executor.NewChatExecutor(pool, "").ObserveStreamFailure("devin-account", got, "swe-2")
+	executor.NewChatExecutor(pool).ObserveStreamFailure("devin-account", got, "swe-2")
 	item, _ := pool.ByID("devin-account")
 	if item.LastKind != accounts.KindUnavailable || item.DownUntil.IsZero() {
 		t.Fatalf("transport interruption was not unavailable: kind=%q down=%v", item.LastKind, item.DownUntil)

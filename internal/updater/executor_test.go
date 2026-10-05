@@ -22,6 +22,7 @@ type runnerStep struct {
 	err           error
 	requireActive bool
 	beforeReturn  func()
+	env           string
 }
 
 type scriptedRunner struct {
@@ -31,6 +32,10 @@ type scriptedRunner struct {
 }
 
 func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return r.RunEnv(ctx, nil, name, args...)
+}
+
+func (r *scriptedRunner) RunEnv(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	r.t.Helper()
 	if r.index >= len(r.steps) {
 		r.t.Fatalf("unexpected command: %s %s", name, strings.Join(args, " "))
@@ -39,6 +44,14 @@ func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) (
 	r.index++
 	if name != step.name || !reflect.DeepEqual(args, step.args) {
 		r.t.Fatalf("command %d = %s %q, want %s %q", r.index, name, args, step.name, step.args)
+	}
+	if step.env != "" {
+		joined := strings.Join(env, ",")
+		if !strings.Contains(joined, step.env) {
+			r.t.Fatalf("command %d env = %q, want %q", r.index, joined, step.env)
+		}
+	} else if len(env) > 0 {
+		r.t.Fatalf("command %d carried unexpected env %q", r.index, strings.Join(env, ","))
 	}
 	if step.requireActive && ctx.Err() != nil {
 		r.t.Fatalf("command %d received canceled context: %v", r.index, ctx.Err())
@@ -58,11 +71,7 @@ func (r *scriptedRunner) assertDone() {
 
 func TestExecutorApplySuccess(t *testing.T) {
 	directory := t.TempDir()
-	envPath := filepath.Join(directory, ".env")
 	composePath := filepath.Join(directory, "docker-compose.yml")
-	if err := os.WriteFile(envPath, []byte("QODER_MAX_INFLIGHT=4\nCLI2API_IMAGE=old\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(composePath, []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,12 +103,12 @@ func TestExecutorApplySuccess(t *testing.T) {
 		{name: "docker", args: []string{"image", "tag", "sha256:old", currentImage}},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", `test -f "$BACKUP_PATH"`}},
 		{name: "docker", args: []string{"pull", targetImage}},
-		{name: "docker", args: composeArgs(envPath, composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy")},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), env: "CLI2API_IMAGE=" + targetImage},
 		{name: "docker", args: []string{"inspect", "qoder-api-proxy"}, output: inspectAfter},
 		{name: "docker", args: []string{"network", "connect", "--alias", "qoder-api-proxy", "sub2api-deploy_sub2api-network", "qoder-api-proxy"}},
 	}}
 	executor := NewExecutor(ExecutorConfig{
-		ComposeFile: composePath, EnvFile: envPath, ImageRepository: repository,
+		ComposeFile: composePath, ImageRepository: repository,
 		HealthURL: health.URL, HealthTimeout: time.Second,
 	})
 	executor.runner = runner
@@ -121,24 +130,12 @@ func TestExecutorApplySuccess(t *testing.T) {
 	if want := []string{"preparing", "pulling", "recreating", "checking"}; !reflect.DeepEqual(states, want) {
 		t.Fatalf("states = %v, want %v", states, want)
 	}
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "CLI2API_IMAGE="+targetImage) {
-		t.Fatalf("env = %q", data)
-	}
 	runner.assertDone()
 }
 
 func TestExecutorRollbackUsesFreshContextAndOldImage(t *testing.T) {
 	directory := t.TempDir()
-	envPath := filepath.Join(directory, ".env")
 	composePath := filepath.Join(directory, "docker-compose.yml")
-	originalEnv := []byte("QODER_MAX_INFLIGHT=4\nCLI2API_IMAGE=old\n")
-	if err := os.WriteFile(envPath, originalEnv, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(composePath, []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -168,17 +165,17 @@ func TestExecutorRollbackUsesFreshContextAndOldImage(t *testing.T) {
 		{name: "docker", args: []string{"image", "tag", "sha256:old", currentImage}},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", `test -f "$BACKUP_PATH"`}},
 		{name: "docker", args: []string{"pull", targetImage}},
-		{name: "docker", args: composeArgs(envPath, composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), err: errors.New("recreate failed"), beforeReturn: cancelApply},
-		{name: "docker", args: composeArgs(envPath, composePath, "stop", "qoder-api-proxy"), requireActive: true},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), err: errors.New("recreate failed"), beforeReturn: cancelApply, env: "CLI2API_IMAGE=" + targetImage},
+		{name: "docker", args: composeArgs(composePath, "stop", "qoder-api-proxy"), requireActive: true, env: "CLI2API_IMAGE=" + currentImage},
 		{name: "docker", args: []string{"run", "--rm", "-v", "qoder-data:/data", "-e", "BACKUP_PATH=" + backupPath, "--entrypoint", "/bin/sh", currentImage, "-c", restoreSQLiteScript()}, requireActive: true},
-		{name: "docker", args: composeArgs(envPath, composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), requireActive: true},
+		{name: "docker", args: composeArgs(composePath, "up", "-d", "--no-deps", "--force-recreate", "qoder-api-proxy"), requireActive: true, env: "CLI2API_IMAGE=" + currentImage},
 		{name: "docker", args: []string{"inspect", "qoder-api-proxy"}, output: inspectOutputWithNetworks("sha256:old", "qoder-data", map[string][]string{
 			"deploy_default": {"qoder-api-proxy"},
 		}), requireActive: true},
 		{name: "docker", args: []string{"network", "connect", "--alias", "qoder-api-proxy", "sub2api-deploy_sub2api-network", "qoder-api-proxy"}, requireActive: true},
 	}}
 	executor := NewExecutor(ExecutorConfig{
-		ComposeFile: composePath, EnvFile: envPath, ImageRepository: repository,
+		ComposeFile: composePath, ImageRepository: repository,
 		HealthURL: health.URL, HealthTimeout: time.Second,
 	})
 	executor.runner = runner
@@ -200,52 +197,12 @@ func TestExecutorRollbackUsesFreshContextAndOldImage(t *testing.T) {
 	if want := []string{"preparing", "pulling", "recreating", "rolling_back"}; !reflect.DeepEqual(states, want) {
 		t.Fatalf("states = %v, want %v", states, want)
 	}
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "CLI2API_IMAGE="+currentImage) {
-		t.Fatalf("env = %q, want pinned current image %q", data, currentImage)
-	}
 	runner.assertDone()
-}
-
-func TestSetEnvValueAtomicPreservesExistingSettings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".env")
-	if err := os.WriteFile(path, []byte("QODER_MAX_INFLIGHT=4\nCLI2API_IMAGE=old\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original, mode, err := readEnvFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := setEnvValueAtomic(path, mode, "CLI2API_IMAGE", "ghcr.io/caigee-cmd/cli2api:v0.2.2"); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	if !strings.Contains(text, "QODER_MAX_INFLIGHT=4") || !strings.Contains(text, "CLI2API_IMAGE=ghcr.io/caigee-cmd/cli2api:v0.2.2") {
-		t.Fatalf("env = %q", text)
-	}
-	if err := writeEnvFileAtomic(path, mode, original); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(restored) != string(original) {
-		t.Fatalf("restored env = %q", restored)
-	}
 }
 
 func TestExecutorConfigRequiresAbsoluteFiles(t *testing.T) {
 	for _, config := range []ExecutorConfig{
-		{ComposeFile: "deploy/docker-compose.yml", EnvFile: "/tmp/.env"},
-		{ComposeFile: "/tmp/docker-compose.yml", EnvFile: "deploy/.env"},
+		{ComposeFile: "deploy/docker-compose.yml"},
 	} {
 		if err := NewExecutor(config).validateConfig(); err == nil {
 			t.Fatalf("config unexpectedly accepted: %+v", config)
@@ -294,8 +251,8 @@ func networkPayload(networks map[string][]string) map[string]any {
 	return payload
 }
 
-func composeArgs(envPath, composePath string, args ...string) []string {
-	result := []string{"compose", "--env-file", envPath, "-f", composePath}
+func composeArgs(composePath string, args ...string) []string {
+	result := []string{"compose", "-f", composePath}
 	return append(result, args...)
 }
 

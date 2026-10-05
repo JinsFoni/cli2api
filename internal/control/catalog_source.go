@@ -93,9 +93,11 @@ func (a *CatalogSource) fetchProviderModels(refresh bool, accountID string, mode
 		if accountID != "" && item.ID != accountID {
 			continue
 		}
-		if item.Provider == "" || item.Provider == "qoder" {
+		if item.Provider == "" {
 			continue
 		}
+		// Qoder's display catalog comes from WorkerModels (the injected
+		// native fetch) rather than a registered adapter.Models.
 		adapter, ok := a.Providers.Get(item.Provider)
 		if !ok || adapter.Models == nil {
 			continue
@@ -149,7 +151,9 @@ func (a *CatalogSource) fetchProviderModels(refresh bool, accountID string, mode
 	// region stamping and send pure-Qoder pools through the unlabeled fallback.
 	var qoderModels []map[string]any
 	for _, item := range a.Accounts() {
-		if item.Provider != "qoder" || !item.Worker {
+		// Native path: qoder accounts have no worker URL; the injected
+		// WorkerModels fn resolves the catalog natively per account.
+		if item.Provider != "qoder" {
 			continue
 		}
 		if accountID != "" && item.ID != accountID {

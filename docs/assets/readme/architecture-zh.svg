@@ -35,11 +35,11 @@
   <!-- 3. account runtimes -->
   <rect x="260" y="310" width="214" height="64" rx="12" fill="#18181B" stroke="#3F3F46"/>
   <text x="367" y="337" text-anchor="middle" font-size="18" font-weight="600" fill="#FCFCFC">账号运行时 · A</text>
-  <text x="367" y="360" text-anchor="middle" font-size="16" fill="#71717A">Node/WASM / 进程内适配器</text>
+  <text x="367" y="360" text-anchor="middle" font-size="16" fill="#71717A">进程内适配器</text>
 
   <rect x="506" y="310" width="214" height="64" rx="12" fill="#18181B" stroke="#3F3F46"/>
   <text x="613" y="337" text-anchor="middle" font-size="18" font-weight="600" fill="#FCFCFC">账号运行时 · B</text>
-  <text x="613" y="360" text-anchor="middle" font-size="16" fill="#71717A">Node/WASM / 进程内适配器</text>
+  <text x="613" y="360" text-anchor="middle" font-size="16" fill="#71717A">进程内适配器</text>
 
   <!-- arrows runtimes -> upstream -->
   <line x1="367" y1="374" x2="367" y2="400" stroke="#52525B" stroke-width="2"/>
