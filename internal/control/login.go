@@ -58,10 +58,8 @@ func (a *Accounts) CompleteLogin(ctx context.Context, id, callback string) error
 
 // LoginPAT stores a pasted provider-native token for an in-process account whose
 // adapter exposes a PAT credential (for example Command Code's user_… key). The
-// Qoder child runtime keeps its worker login path; only adapters that implement
-// CredentialImporter accept this. The token is wrapped as {"api_key": …} for the
-// importer, then persisted in the provider's own credential format and the
-// account is enabled and started.
+// token is wrapped as {"api_key": …} for the importer, then persisted in the
+// provider's own credential format and the account is enabled and started.
 func (a *Accounts) LoginPAT(ctx context.Context, id, token string) error {
 	account, err := a.GetStored(ctx, id)
 	if err != nil {
@@ -84,6 +82,45 @@ func (a *Accounts) LoginPAT(ctx context.Context, id, token string) error {
 		return operationError("invalid_credential", err.Error())
 	}
 	if err := a.store().SaveCredentialPayload(ctx, id, importer.Format(), prepared.Payload); err != nil {
+		return operationError("credential_save_failed", err.Error())
+	}
+	enabled := true
+	if err := a.store().Update(ctx, id, accounts.UpdateAccount{Enabled: &enabled}); err != nil {
+		return err
+	}
+	updated, err := a.store().Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := a.runtime.StartAccount(ctx, updated); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LoginPATNative runs the native Qoder PAT flow: exchange the pt-* token for
+// a job-token pair, fetch the user identity, generate the runtime field pair,
+// and persist the whole blob in the CLI's storage shape. No worker involved.
+func (a *Accounts) LoginPATNative(ctx context.Context, id, token string) error {
+	account, err := a.GetStored(ctx, id)
+	if err != nil {
+		return err
+	}
+	adapter, ok := a.Providers.Get(account.Provider)
+	if !ok {
+		return operationError("provider_unsupported", "provider does not support this action")
+	}
+	patLogin, ok := adapter.Login.(providers.PATLoginProvider)
+	if !ok {
+		return operationError("provider_unsupported", "provider does not support native PAT login")
+	}
+	pair, err := patLogin.ExchangePATForCredential(ctx, id, token)
+	if err != nil {
+		return operationError("login_pat_failed", err.Error())
+	}
+	authType := "native"
+	credential := accounts.NativeCredential{UserBlob: pair.UserBlob, MachineID: pair.MachineID}
+	if err := a.store().SaveCredential(ctx, id, authType, credential); err != nil {
 		return operationError("credential_save_failed", err.Error())
 	}
 	enabled := true

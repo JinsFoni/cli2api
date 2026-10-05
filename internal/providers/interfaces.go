@@ -301,6 +301,19 @@ type CredentialImporter interface {
 	PrepareImport([]byte) (CredentialImport, error)
 }
 
+// NativeCredentialPair is the persisted blob plus its machine id, mirroring
+// accounts.NativeCredential without importing that package (cycle).
+type NativeCredentialPair struct {
+	UserBlob  []byte
+	MachineID string
+}
+
+// PATLoginProvider exchanges a pasted PAT for a persisted native credential
+// without a worker. Implemented by the qoder Client.
+type PATLoginProvider interface {
+	ExchangePATForCredential(ctx context.Context, accountID, pat string) (NativeCredentialPair, error)
+}
+
 // AdminRequest/Response carry worker protocol data, never a public HTTP writer.
 type AdminRequest struct {
 	AccountID, Action, Method, ContentType string
