@@ -106,9 +106,11 @@ func TestCheckinSchedulerSkipsDisabledCampaignButManualCanRecheck(t *testing.T) 
 	}
 	location, _ := time.LoadLocation("Asia/Shanghai")
 	now := time.Now().In(location)
-	manager.runScheduledCheckins(context.Background(), time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, location))
+	// "skipped" re-probes after the 30-minute cool-down, so run the scheduler
+	// while still inside the cool-down: no extra call yet.
+	manager.runScheduledCheckins(context.Background(), now)
 	if calls.Load() != 1 {
-		t.Fatal("disabled campaign ran repeatedly")
+		t.Fatal("skipped campaign re-probed inside the cool-down")
 	}
 	if _, err := manager.CheckinAccount(context.Background(), account.ID); err != nil {
 		t.Fatal(err)

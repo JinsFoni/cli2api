@@ -312,7 +312,15 @@ func (c *Client) Checkin(ctx context.Context, accountID string) (providers.Check
 // The status return distinguishes 401 (refreshable) from final errors.
 func (c *Client) checkinOnce(ctx context.Context, httpClient *http.Client, account accounts.Account, cred userBlob, endpoint nativeEndpoints) (providers.CheckinResult, int, error) {
 	machineID := cred.machineID()
-	items, status, err := c.listCampaigns(ctx, httpClient, endpoint, cred.bearerToken(), machineID)
+	// The sash service only lists the daily CLAIM_BENEFIT campaign when the
+	// request carries the desktop risk triple; without it the day silently
+	// reads as "no activity". Best effort: claim without it if the helper is
+	// missing rather than failing the check-in outright.
+	var risk *riskIdentity
+	if c.riskIdentities != nil {
+		risk, _ = c.riskIdentities.get(account.ProviderRegion, account.RemoteUID)
+	}
+	items, status, err := c.listCampaigns(ctx, httpClient, endpoint, cred.bearerToken(), machineID, risk)
 	if err != nil {
 		if status == http.StatusNotFound || status == http.StatusMethodNotAllowed || status == http.StatusGone {
 			// Activity platform not deployed (observed on the global region):
@@ -351,7 +359,7 @@ func (c *Client) checkinOnce(ctx context.Context, httpClient *http.Client, accou
 	hasReward := false
 	for _, campaign := range claimable {
 		path := fmt.Sprintf("/sash/api/v1/me/campaigns/%s/claim", strings.TrimSpace(campaign.CampaignID))
-		body, claimStatus, err := c.nativeRequest(ctx, httpClient, endpoint, http.MethodPost, path, cred.bearerToken(), machineID)
+		body, claimStatus, err := c.nativeRequest(ctx, httpClient, endpoint, http.MethodPost, path, cred.bearerToken(), machineID, risk)
 		if err != nil {
 			// A 401 on claim is refreshable one level up; everything else is final.
 			return providers.CheckinResult{}, claimStatus, err
@@ -371,7 +379,7 @@ func (c *Client) checkinOnce(ctx context.Context, httpClient *http.Client, accou
 		}
 		if claimedStatus != "CLAIMED" {
 			// Re-list once: an unconfirmed claim may still have landed.
-			relisted, _, err := c.listCampaigns(ctx, httpClient, endpoint, cred.bearerToken(), machineID)
+			relisted, _, err := c.listCampaigns(ctx, httpClient, endpoint, cred.bearerToken(), machineID, risk)
 			landed := false
 			if err == nil {
 				for _, item := range relisted {
@@ -412,12 +420,15 @@ func trimFloat(value float64) string {
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
 }
 
-func (c *Client) nativeRequest(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, method, path, token, machineID string) ([]byte, int, error) {
+func (c *Client) nativeRequest(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, method, path, token, machineID string, risk *riskIdentity) ([]byte, int, error) {
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.Base+path, nil)
 	if err != nil {
 		return nil, 0, err
 	}
 	for key, value := range checkinHeaders(token, machineID, endpoint) {
+		request.Header.Set(key, value)
+	}
+	for key, value := range riskIdentityHeaders(risk) {
 		request.Header.Set(key, value)
 	}
 	response, err := httpClient.Do(request)
@@ -435,8 +446,8 @@ func (c *Client) nativeRequest(ctx context.Context, httpClient *http.Client, end
 	return body, response.StatusCode, nil
 }
 
-func (c *Client) listCampaigns(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, token, machineID string) ([]nativeCampaign, int, error) {
-	body, status, err := c.nativeRequest(ctx, httpClient, endpoint, http.MethodGet, "/sash/api/v1/me/campaigns", token, machineID)
+func (c *Client) listCampaigns(ctx context.Context, httpClient *http.Client, endpoint nativeEndpoints, token, machineID string, risk *riskIdentity) ([]nativeCampaign, int, error) {
+	body, status, err := c.nativeRequest(ctx, httpClient, endpoint, http.MethodGet, "/sash/api/v1/me/campaigns", token, machineID, risk)
 	if err != nil {
 		return nil, status, err
 	}

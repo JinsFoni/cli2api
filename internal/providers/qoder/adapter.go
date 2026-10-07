@@ -50,21 +50,26 @@ type Client struct {
 	// nil until the first native chat.
 	identities *identityCache
 
+	// riskIdentities caches the desktop risk triple (runtime-info helper)
+	// per region:uid for check-in; nil until the first check-in.
+	riskIdentities *riskIdentityCache
+
 	loginTimeout  time.Duration
 	loginInterval time.Duration
 }
 
 func NewClient(store NativeStore) *Client {
 	return &Client{
-		nativeStore:   store,
-		modelsHTTP:    &http.Client{Timeout: 15 * time.Second},
-		healthHTTP:    &http.Client{Timeout: 2 * time.Second},
-		quotaHTTP:     &http.Client{Timeout: 5 * time.Second},
-		adminHTTP:     &http.Client{Timeout: 120 * time.Second},
-		chatHTTP:      &http.Client{Timeout: 120 * time.Second},
-		nativeBase:    &http.Client{Timeout: 15 * time.Second},
-		loginTimeout:  90 * time.Second,
-		loginInterval: 200 * time.Millisecond,
+		nativeStore:    store,
+		modelsHTTP:     &http.Client{Timeout: 15 * time.Second},
+		healthHTTP:     &http.Client{Timeout: 2 * time.Second},
+		quotaHTTP:      &http.Client{Timeout: 5 * time.Second},
+		adminHTTP:      &http.Client{Timeout: 120 * time.Second},
+		chatHTTP:       &http.Client{Timeout: 120 * time.Second},
+		nativeBase:     &http.Client{Timeout: 15 * time.Second},
+		riskIdentities: newRiskIdentityCache(),
+		loginTimeout:   90 * time.Second,
+		loginInterval:  200 * time.Millisecond,
 	}
 }
 

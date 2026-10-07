@@ -126,8 +126,18 @@ func checkinDueFor(account Account, configuredTime string, now time.Time, allowD
 	if (!account.Enabled && !allowDisabled) || !account.AutoCheckin {
 		return false
 	}
-	if recordedToday(account.LastCheckinAt, now) && account.LastCheckinStatus != "error" {
-		return false
+	if recordedToday(account.LastCheckinAt, now) {
+		switch account.LastCheckinStatus {
+		case "error":
+			// fall through to the slot/retry windows below
+		case "skipped":
+			// "skipped" usually means the daily campaign was not listed yet
+			// (Qoder rotates it in after 10:00 CST, observed 10:10–10:18), so
+			// re-probe after a cool-down instead of waiting for the next day.
+			return checkinReprobeDue(account.LastCheckinAt, now, 30*time.Minute)
+		default:
+			return false
+		}
 	}
 	due, err := checkinSlot(configuredTime, account.ID, now)
 	if err != nil || now.Before(due) {
@@ -139,6 +149,16 @@ func checkinDueFor(account Account, configuredTime string, now time.Time, allowD
 	}
 	retry, _ := checkinSlot("21:00", account.ID, now)
 	return due.Before(retry) && !now.Before(retry) && last.Before(retry)
+}
+
+// checkinReprobeDue reports whether a non-terminal check-in outcome recorded
+// at `at` is older than the cool-down and may be retried within the same day.
+func checkinReprobeDue(at string, now time.Time, coolDown time.Duration) bool {
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(at))
+	if err != nil {
+		return false
+	}
+	return now.Sub(parsed.In(now.Location())) >= coolDown
 }
 
 func (manager *Manager) runScheduledCheckins(ctx context.Context, now time.Time) {

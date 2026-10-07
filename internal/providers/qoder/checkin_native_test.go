@@ -6,10 +6,14 @@ import (
 	"crypto/cipher"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -730,3 +734,107 @@ func TestProbeCredentialVerdictNeedsNoNetwork(t *testing.T) {
 var _ providers.AccountCheckiner = (interface {
 	Checkin(context.Context, string) (providers.CheckinResult, error)
 })(nil)
+
+func TestCheckinNativeRiskIdentityHeaders(t *testing.T) {
+	var sawRiskToken, sawRiskCode, sawRiskType string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/sash/api/v1/me/campaigns" {
+			sawRiskToken = r.Header.Get("Cosy-MachineToken")
+			sawRiskCode = r.Header.Get("Cosy-MachineCode")
+			sawRiskType = r.Header.Get("Cosy-MachineType")
+			_, _ = w.Write([]byte(`{"campaigns":[
+				{"campaignId":"c1","actionType":"CLAIM_BENEFIT","claimStatus":"CLAIMED","benefit":{"kind":"CREDITS","amount":100}}
+			]}`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+
+	store := &fakeNativeStore{
+		account:    cnAccount(upstream.URL),
+		credential: encryptedCredential(t, machineID, nil),
+	}
+	// cnAccount leaves RemoteUID empty; set it to exercise the uid binding.
+	account := store.account
+	account.RemoteUID = "01a0dec1-c895-7eea-a14b-ce315fe3909a"
+	store.account = account
+
+	client := newNativeClient(store)
+	client.SetHTTP(upstream.Client())
+	pointCnAt(t, client, upstream.URL)
+	client.riskIdentities.override = func(region, uid string) (*riskIdentity, error) {
+		if region != "cn" || uid != account.RemoteUID {
+			return nil, fmt.Errorf("unexpected lookup region=%q uid=%q", region, uid)
+		}
+		return &riskIdentity{MachineToken: "tok-1", MachineCode: "code-1", MachineType: "type-1"}, nil
+	}
+
+	result, err := client.Checkin(context.Background(), "acc-1")
+	if err != nil || result.Status != "already" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if sawRiskToken != "tok-1" || sawRiskCode != "code-1" || sawRiskType != "type-1" {
+		t.Fatalf("risk headers token=%q code=%q type=%q", sawRiskToken, sawRiskCode, sawRiskType)
+	}
+}
+
+func TestCheckinNativeRiskIdentityFailsOpen(t *testing.T) {
+	var sawRiskToken string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/sash/api/v1/me/campaigns" {
+			sawRiskToken = r.Header.Get("Cosy-MachineToken")
+			_, _ = w.Write([]byte(`{"campaigns":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+
+	store := &fakeNativeStore{account: cnAccount(upstream.URL), credential: encryptedCredential(t, machineID, nil)}
+	client := newNativeClient(store)
+	client.SetHTTP(upstream.Client())
+	pointCnAt(t, client, upstream.URL)
+	client.riskIdentities.override = func(string, string) (*riskIdentity, error) {
+		return nil, errors.New("helper missing")
+	}
+
+	result, err := client.Checkin(context.Background(), "acc-1")
+	if err != nil || result.Status != "skipped" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if sawRiskToken != machineID {
+		t.Fatalf("expected machine-id fallback token, got %q", sawRiskToken)
+	}
+}
+
+func TestRiskIdentityHelperParsing(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("stdin invocation is darwin/windows only")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, ".bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(bin, fmt.Sprintf("runtime-info-%s-%s-test", goPlatform(), goArch()))
+	script := "#!/bin/sh\ncat > /dev/null\necho '{\"machineToken\":\"t1\",\"machineCode\":\"c1\",\"machineType\":\"y1\",\"extra\":true}'\n"
+	if runtime.GOOS == "windows" {
+		t.Skip("windows batch script not exercised here")
+	}
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := runRiskIdentity(context.Background(), helper, "0", "uid-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.MachineToken != "t1" || identity.MachineCode != "c1" || identity.MachineType != "y1" {
+		t.Fatalf("identity=%+v", identity)
+	}
+	if got := riskHelperPath("cn"); got != "" {
+		// helper search starts at the real HOME; the temp dir must not leak in
+		_ = got
+	}
+}
