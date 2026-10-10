@@ -178,7 +178,7 @@ func ensureRuntimeInfo(ctx context.Context, region string) error {
 	if err := verifyIntegrity(tarball, integrity); err != nil {
 		return err
 	}
-	elf, err := extractRuntimeInfoELF(tarball, goArch())
+	elf, err := extractRuntimeInfoELF(tarball, runtime.GOARCH)
 	if err != nil {
 		return err
 	}
