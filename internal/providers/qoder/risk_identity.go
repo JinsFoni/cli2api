@@ -73,6 +73,8 @@ func riskEnv(region string) string {
 // riskHelperHomes lists candidate Qoder HOME directories, CN app first for the
 // CN region (its helper lands in ~/.qoder-cn/.bin, the global one in
 // ~/.qoder/.bin), then the other one as fallback — same order CreditDaddy uses.
+// The self-install directory (<QODER_DATA_DIR>/.bin) is searched last so an
+// app-provided helper always wins.
 func riskHelperHomes(region string) []string {
 	cn := []string{
 		os.Getenv("QODER_CN_HOME"),
@@ -82,10 +84,11 @@ func riskHelperHomes(region string) []string {
 		os.Getenv("QODER_HOME"),
 		filepath.Join(homeDir(), ".qoder"),
 	}
+	selfInstall := []string{umidHelperHome()}
 	if strings.EqualFold(strings.TrimSpace(region), "cn") {
-		return append(cn, gl...)
+		return append(append(cn, gl...), selfInstall...)
 	}
-	return append(gl, cn...)
+	return append(append(gl, cn...), selfInstall...)
 }
 
 func homeDir() string {

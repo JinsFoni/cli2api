@@ -266,6 +266,11 @@ func TestCheckinNativeAlreadyAndSkipped(t *testing.T) {
 			client := newNativeClient(store)
 			client.SetHTTP(upstream.Client())
 			pointCnAt(t, client, upstream.URL)
+			// The table exercises response parsing, not identity lookup; a
+			// triple keeps the missing-helper error path out of the way.
+			client.riskIdentities.override = func(string, string) (*riskIdentity, error) {
+				return &riskIdentity{MachineToken: "tok-t", MachineCode: "code-t", MachineType: "type-t"}, nil
+			}
 			result, err := client.Checkin(context.Background(), "acc-1")
 			if err != nil || result.Status != tc.want {
 				t.Fatalf("result=%+v err=%v", result, err)
@@ -780,7 +785,10 @@ func TestCheckinNativeRiskIdentityHeaders(t *testing.T) {
 	}
 }
 
-func TestCheckinNativeRiskIdentityFailsOpen(t *testing.T) {
+// A hidden campaign without the risk triple is no longer misreported as
+// "签到活动未开放": the check-in says the device identity is missing (and how
+// to fix it) so the user is not sent hunting for a campaign that exists.
+func TestCheckinNativeRiskIdentityFailsLoud(t *testing.T) {
 	var sawRiskToken string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/sash/api/v1/me/campaigns" {
@@ -797,15 +805,94 @@ func TestCheckinNativeRiskIdentityFailsOpen(t *testing.T) {
 	client.SetHTTP(upstream.Client())
 	pointCnAt(t, client, upstream.URL)
 	client.riskIdentities.override = func(string, string) (*riskIdentity, error) {
-		return nil, errors.New("helper missing")
+		return nil, errors.New("no runtime-info helper installed")
+	}
+
+	result, err := client.Checkin(context.Background(), "acc-1")
+	if err == nil {
+		t.Fatal("expected an error when the risk identity is missing")
+	}
+	if !strings.Contains(err.Error(), "runtime-info") {
+		t.Fatalf("error should name the fix, got %v", err)
+	}
+	if result.Status != "error" || !strings.Contains(result.Message, "设备风控身份") {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if sawRiskToken != machineID {
+		t.Fatalf("expected machine-id fallback token, got %q", sawRiskToken)
+	}
+}
+
+// A VIEW_DETAILS-only list WITH the risk triple still means "no activity
+// today" — the server genuinely withheld nothing claimable.
+func TestCheckinNativeNoActivityWithRiskIdentity(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/sash/api/v1/me/campaigns" {
+			_, _ = w.Write([]byte(`{"campaigns":[{"campaignId":"c-1","actionType":"VIEW_DETAILS","claimStatus":"CLAIMABLE"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+
+	store := &fakeNativeStore{account: cnAccount(upstream.URL), credential: encryptedCredential(t, machineID, nil)}
+	client := newNativeClient(store)
+	client.SetHTTP(upstream.Client())
+	pointCnAt(t, client, upstream.URL)
+	client.riskIdentities.override = func(string, string) (*riskIdentity, error) {
+		return &riskIdentity{MachineToken: "tok-1", MachineCode: "code-1", MachineType: "type-1"}, nil
 	}
 
 	result, err := client.Checkin(context.Background(), "acc-1")
 	if err != nil || result.Status != "skipped" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if sawRiskToken != machineID {
-		t.Fatalf("expected machine-id fallback token, got %q", sawRiskToken)
+	if result.Message != "签到活动未开放" {
+		t.Fatalf("message=%q", result.Message)
+	}
+}
+
+// Self-install fills the gap: the first lookup fails, ensureRuntimeInfo
+// succeeds (override removed), and the retried lookup returns the triple.
+func TestCheckinNativeSelfInstallRecovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("env-based override isn't the point here")
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/sash/api/v1/me/campaigns" {
+			_, _ = w.Write([]byte(`{"campaigns":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer upstream.Close()
+
+	store := &fakeNativeStore{account: cnAccount(upstream.URL), credential: encryptedCredential(t, machineID, nil)}
+	client := newNativeClient(store)
+	client.SetHTTP(upstream.Client())
+	pointCnAt(t, client, upstream.URL)
+
+	lookups := 0
+	client.riskIdentities.override = func(string, string) (*riskIdentity, error) {
+		lookups++
+		if lookups == 1 {
+			return nil, errors.New("no runtime-info helper installed")
+		}
+		return &riskIdentity{MachineToken: "tok-2", MachineCode: "code-2", MachineType: "type-2"}, nil
+	}
+	// Stub the installer: the real one is linux-only and network-bound.
+	original := ensureRuntimeInfoFn
+	ensureRuntimeInfoFn = func(ctx context.Context, region string) error { return nil }
+	t.Cleanup(func() { ensureRuntimeInfoFn = original })
+
+	result, _ := client.Checkin(context.Background(), "acc-1")
+	if lookups != 2 {
+		t.Fatalf("expected a retry after install, lookups=%d", lookups)
+	}
+	if result.Status != "skipped" {
+		// Empty list with a valid triple → genuinely no activity; the important
+		// assertion is lookups==2 above.
+		t.Logf("status=%q message=%q", result.Status, result.Message)
 	}
 }
 

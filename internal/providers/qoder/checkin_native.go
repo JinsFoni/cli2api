@@ -314,11 +314,21 @@ func (c *Client) checkinOnce(ctx context.Context, httpClient *http.Client, accou
 	machineID := cred.machineID()
 	// The sash service only lists the daily CLAIM_BENEFIT campaign when the
 	// request carries the desktop risk triple; without it the day silently
-	// reads as "no activity". Best effort: claim without it if the helper is
-	// missing rather than failing the check-in outright.
+	// reads as "no activity". When the helper is missing and self-install is
+	// enabled, install it once and retry the lookup before giving up.
 	var risk *riskIdentity
+	var riskErr error
 	if c.riskIdentities != nil {
-		risk, _ = c.riskIdentities.get(account.ProviderRegion, account.RemoteUID)
+		risk, riskErr = c.riskIdentities.get(account.ProviderRegion, account.RemoteUID)
+		if riskErr != nil {
+			if installErr := ensureRuntimeInfoFn(ctx, account.ProviderRegion); installErr != nil {
+				// Report whichever failure is more actionable: the install
+				// error explains how to fix a missing helper.
+				riskErr = installErr
+			} else if risk, riskErr = c.riskIdentities.get(account.ProviderRegion, account.RemoteUID); riskErr == nil {
+				riskErr = nil
+			}
+		}
 	}
 	items, status, err := c.listCampaigns(ctx, httpClient, endpoint, cred.bearerToken(), machineID, risk)
 	if err != nil {
@@ -331,12 +341,29 @@ func (c *Client) checkinOnce(ctx context.Context, httpClient *http.Client, accou
 	}
 
 	benefits := make([]nativeCampaign, 0, len(items))
+	sawClaimBenefit := false
 	for _, item := range items {
+		if item.ActionType == "CLAIM_BENEFIT" {
+			sawClaimBenefit = true
+		}
 		if item.ActionType == "CLAIM_BENEFIT" && strings.TrimSpace(item.CampaignID) != "" && item.Benefit.Kind == "CREDITS" {
 			benefits = append(benefits, item)
 		}
 	}
 	if len(benefits) == 0 {
+		// Distinguish "the server withheld the claimable campaign" from "no
+		// activity": without the risk triple the CLAIM_BENEFIT campaign is
+		// hidden entirely, so a list with no CLAIM_BENEFIT at all while the
+		// identity is missing reads as hidden, not empty. Saying "活动未开放"
+		// there sends users hunting for a campaign that exists — the missing
+		// identity is the real problem. A visible CLAIM_BENEFIT with another
+		// benefit kind (or a CLAIMED one) means the identity worked.
+		if !sawClaimBenefit && risk == nil && riskErr != nil {
+			return providers.CheckinResult{
+				Status:  "error",
+				Message: fmt.Sprintf("缺少设备风控身份，无法领取每日积分（%s）", riskErr),
+			}, status, errors.New(riskErr.Error())
+		}
 		return providers.CheckinResult{Status: "skipped", Message: "签到活动未开放"}, status, nil
 	}
 	claimable := make([]nativeCampaign, 0, len(benefits))
