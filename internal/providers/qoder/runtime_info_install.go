@@ -111,14 +111,24 @@ var umidRegistry = func(ctx context.Context, url string) ([]byte, error) {
 // ensureRuntimeInfoFn is the seam checkinOnce calls; tests stub it.
 var ensureRuntimeInfoFn = ensureRuntimeInfo
 
+// umidHostSupported gates the install to platforms the embedded ELFs run on;
+// a variable so tests exercise the flow on every host OS.
+var umidHostSupported = func() bool {
+	return runtime.GOOS == "linux" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64")
+}
+
+func umidHostError() error {
+	return fmt.Errorf("runtime-info self-install supports linux amd64/arm64 only (host is %s/%s)", runtime.GOOS, runtime.GOARCH)
+}
+
 // ensureRuntimeInfo installs the helper when allowed and missing. All failures
 // are returned; the check-in caller decides how loud to be.
 func ensureRuntimeInfo(ctx context.Context, region string) error {
 	if !umidInstallEnabled() {
 		return errors.New("runtime-info helper not installed (set QODER_INSTALL_RUNTIME_INFO=1 to self-install)")
 	}
-	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
-		return fmt.Errorf("runtime-info self-install supports linux amd64/arm64 only (host is %s/%s)", runtime.GOOS, runtime.GOARCH)
+	if !umidHostSupported() {
+		return umidHostError()
 	}
 	if path := riskHelperPath(region); path != "" {
 		return nil // an app-provided helper already exists

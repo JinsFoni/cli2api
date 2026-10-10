@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -68,6 +67,9 @@ func setUmidEnv(t *testing.T, dataDir string) {
 	t.Helper()
 	t.Setenv("QODER_DATA_DIR", dataDir)
 	t.Setenv("QODER_INSTALL_RUNTIME_INFO", "1")
+	// Isolate the helper search: an app-provided helper on the dev machine
+	// would short-circuit the install flow.
+	t.Setenv("HOME", dataDir)
 	t.Setenv("QODER_HOME", "")
 	t.Setenv("QODER_CN_HOME", "")
 }
@@ -78,7 +80,8 @@ func withUmidRegistry(t *testing.T, tarball []byte, integrity string, calls *int
 		*calls++
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/latest"):
-			_, _ = w.Write([]byte(`{"version":"1.1.67","dist":{"integrity":"` + integrity + `","tarball":"` + serverURL(r) + `/pkg.tgz"}}`))
+			// A relative tarball path keeps the registry-rewrite below honest.
+			_, _ = w.Write([]byte(`{"version":"1.1.67","dist":{"integrity":"` + integrity + `","tarball":"/pkg.tgz"}}`))
 		case strings.HasSuffix(r.URL.Path, "/pkg.tgz"):
 			_, _ = w.Write(tarball)
 		default:
@@ -92,14 +95,6 @@ func withUmidRegistry(t *testing.T, tarball []byte, integrity string, calls *int
 		return original(ctx, server.URL+strings.TrimPrefix(url, "https://registry.npmjs.org"))
 	}
 	t.Cleanup(func() { umidRegistry = original })
-}
-
-func serverURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host
 }
 
 func TestFindELFByMachine(t *testing.T) {
@@ -139,10 +134,17 @@ func TestExtractRuntimeInfoELF(t *testing.T) {
 	}
 }
 
+// withUmidHostSupported pretends the host can run the embedded ELFs so the
+// install flow is exercised on every OS, not just linux CI.
+func withUmidHostSupported(t *testing.T) {
+	t.Helper()
+	original := umidHostSupported
+	umidHostSupported = func() bool { return true }
+	t.Cleanup(func() { umidHostSupported = original })
+}
+
 func TestEnsureRuntimeInfoInstalls(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("self-install path is linux-only")
-	}
+	withUmidHostSupported(t)
 	dataDir := t.TempDir()
 	setUmidEnv(t, dataDir)
 	x64, arm64 := fakeELF(elfMachineX64), fakeELF(elfMachineArm64)
@@ -150,30 +152,25 @@ func TestEnsureRuntimeInfoInstalls(t *testing.T) {
 	var calls int
 	withUmidRegistry(t, tarball, integrityOf(t, tarball), &calls)
 
-	// The probe run will fail (fake ELF is not executable); accept the
-	// install-until-probe outcome and verify the file landed with exec bits.
+	// The probe run will fail (fake ELF is not executable); the write-then-
+	// probe-then-cleanup sequence must surface the probe error and leave no
+	// broken binary behind.
 	err := ensureRuntimeInfo(context.Background(), "cn")
 	target := umidInstalledPath()
-	if _, statErr := os.Stat(target); statErr != nil {
-		t.Fatalf("helper not installed: %v (ensure err=%v)", statErr, err)
-	}
-	// A broken probe must clean up: ensure reports the probe failure.
-	if err == nil {
-		t.Fatal("expected probe failure for a fake ELF")
+	if err == nil || !strings.Contains(err.Error(), "probe") {
+		t.Fatalf("expected probe failure for a fake ELF, got %v", err)
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatal("failed probe should remove the candidate binary")
 	}
-	// The installed name must be discoverable by riskHelperPath via umidBinPath.
+	// Nothing usable may be discoverable by riskHelperPath afterwards.
 	if got := riskHelperPath("cn"); got != "" {
-		t.Fatalf("nothing else should be installed, found %q", got)
+		t.Fatalf("nothing should be installed, found %q", got)
 	}
 }
 
 func TestEnsureRuntimeInfoIntegrityMismatch(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("self-install path is linux-only")
-	}
+	withUmidHostSupported(t)
 	dataDir := t.TempDir()
 	setUmidEnv(t, dataDir)
 	tarball := fakeTarball(t, fakeELF(elfMachineX64), fakeELF(elfMachineArm64))
@@ -196,11 +193,8 @@ func TestEnsureRuntimeInfoDisabled(t *testing.T) {
 }
 
 func TestEnsureRuntimeInfoMissingHelperMessage(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("self-install path is linux-only")
-	}
-	t.Setenv("QODER_INSTALL_RUNTIME_INFO", "1")
-	t.Setenv("QODER_DATA_DIR", t.TempDir())
+	withUmidHostSupported(t)
+	setUmidEnv(t, t.TempDir())
 	// Registry unreachable → install fails with the fetch error.
 	original := umidRegistry
 	umidRegistry = func(ctx context.Context, url string) ([]byte, error) {
