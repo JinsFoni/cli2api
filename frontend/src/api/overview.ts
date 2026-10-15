@@ -174,6 +174,7 @@ export type ProviderDescriptor = {
     browser_login: boolean
     pat_login: boolean
     import_export: boolean
+    usage: boolean
   }
   regions: Array<{ id: string; label: string; checkin?: { timezone: string } }>
   default_region: string

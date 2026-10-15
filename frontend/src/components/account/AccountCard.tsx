@@ -38,6 +38,7 @@ type Props = {
   authUrl?: string
   note?: string
   pat: string
+  supportsUsage: boolean
   t: Translate
   onPatChange: (value: string) => void
   onDeviceLogin: () => void
@@ -79,6 +80,7 @@ export function AccountCard({
   authUrl,
   note,
   pat,
+  supportsUsage,
   t,
   onPatChange,
   onDeviceLogin,
@@ -257,7 +259,7 @@ export function AccountCard({
             exceededLabel={t('quotaExceeded')}
             provider={account.provider}
           />
-        ) : <span className="text-[11px] text-foreground/65">{state === 'hot' || state === 'ready' || state === 'loading' || state === 'starting' ? t('quotaLoading') : t('quotaUnavailable')}</span>}
+        ) : supportsUsage ? <span className="text-[11px] text-foreground/65">{state === 'hot' || state === 'ready' || state === 'loading' || state === 'starting' ? t('quotaLoading') : t('quotaUnavailable')}</span> : null}
 
         {lastError ? (
           <Tooltip>

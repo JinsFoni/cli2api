@@ -490,6 +490,7 @@ export function AccountsPage() {
             authUrl={urlById[account.id]}
             note={noteById[account.id]}
             pat={patById[account.id] || ''}
+            supportsUsage={providers.find((provider) => provider.id === account.provider)?.capabilities.usage ?? true}
             t={t}
             onPatChange={(value) => setPatById((current) => ({ ...current, [account.id]: value }))}
             callbackUrl={callbackById[account.id] || ''}
