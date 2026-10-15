@@ -1,3 +1,4 @@
+import { AgnesMark } from '@/components/AgnesMark'
 import { CommandMark } from '@/components/CommandMark'
 import { CodexMark } from '@/components/CodexMark'
 import { DevinMark } from '@/components/DevinMark'
@@ -28,6 +29,9 @@ export function ProviderMark({ provider, size = 16, className = '' }: Props) {
   }
   if (id === 'codex') {
     return <CodexMark size={size} className={className} />
+  }
+  if (id === 'agnes') {
+    return <AgnesMark size={size} className={className} />
   }
   return <QoderMark size={size} className={className} />
 }

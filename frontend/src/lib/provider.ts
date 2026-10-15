@@ -19,6 +19,10 @@ export function isCommandProvider(provider?: string) {
   return String(provider || '').toLowerCase() === 'command'
 }
 
+export function isAgnesProvider(provider?: string) {
+  return String(provider || '').toLowerCase() === 'agnes'
+}
+
 export function accountProviderFamilyLabel(
   provider: string | undefined,
   t: (key: string) => string,
@@ -28,6 +32,7 @@ export function accountProviderFamilyLabel(
   if (isTraeProvider(providerID)) return 'Trae'
   if (isDevinProvider(providerID)) return 'Devin'
   if (isCommandProvider(providerID)) return 'Command Code'
+  if (isAgnesProvider(providerID)) return 'Agnes AI'
   if (isQoderProvider(providerID)) return 'Qoder'
   return provider || t('account')
 }
@@ -50,6 +55,9 @@ export function accountProviderLabel(
   }
   if (isCommandProvider(providerID)) {
     return t('accountTypeCommandGlobal')
+  }
+  if (isAgnesProvider(providerID)) {
+    return t('accountTypeAgnesGlobal')
   }
   if (isQoderProvider(providerID)) {
     return regionID === 'cn' ? t('accountTypeQoderCN') : t('accountTypeQoderGlobal')

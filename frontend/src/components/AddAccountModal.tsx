@@ -53,6 +53,7 @@ const labelKeys: Record<string, string> = {
   'devin-global': 'accountTypeDevinGlobal',
   'command-global': 'accountTypeCommandGlobal',
   'codex-global': 'accountTypeCodexGlobal',
+  'agnes-global': 'accountTypeAgnesGlobal',
 }
 
 const hintKeys: Record<string, string> = {
@@ -64,6 +65,7 @@ const hintKeys: Record<string, string> = {
   'devin-global': 'accountTypeDevinGlobalHint',
   'command-global': 'accountTypeCommandGlobalHint',
   'codex-global': 'accountTypeCodexGlobalHint',
+  'agnes-global': 'accountTypeAgnesGlobalHint',
 }
 
 function AccountTypeSkeleton({ ariaLabel }: { ariaLabel: string }) {
@@ -369,6 +371,7 @@ export function AddAccountModal({ isOpen, onClose, onAdded }: Props) {
       else if (activeOption.descriptor.id === 'trae') bundle.format = 'trae-oauth-v1'
       else if (activeOption.descriptor.id === 'devin') bundle.format = 'devin-session-v1'
       else if (activeOption.descriptor.id === 'command') bundle.format = 'command-key-v1'
+      else if (activeOption.descriptor.id === 'agnes') bundle.format = 'agnes-key-v1'
       else bundle.format = 'qoder-native-v1'
     }
     try {
@@ -429,9 +432,11 @@ export function AddAccountModal({ isOpen, onClose, onAdded }: Props) {
     : tab === 'pat'
       ? t(activeOption?.provider === 'command'
           ? 'wizardPatLeadCommand'
-          : activeOption?.region === 'cn' && activeOption?.provider === 'qoder'
-            ? 'wizardPatLeadCN'
-            : 'wizardPatLead')
+          : activeOption?.provider === 'agnes'
+            ? 'wizardPatLeadAgnes'
+            : activeOption?.region === 'cn' && activeOption?.provider === 'qoder'
+              ? 'wizardPatLeadCN'
+              : 'wizardPatLead')
       : t('wizardImportLead')
 
   return (

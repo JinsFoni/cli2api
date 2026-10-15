@@ -22,6 +22,7 @@ import (
 	apigateway "github.com/caigee-cmd/cli2api/internal/gateway"
 	applogs "github.com/caigee-cmd/cli2api/internal/logs"
 	"github.com/caigee-cmd/cli2api/internal/providers"
+	"github.com/caigee-cmd/cli2api/internal/providers/agnes"
 	"github.com/caigee-cmd/cli2api/internal/providers/codex"
 	"github.com/caigee-cmd/cli2api/internal/providers/command"
 	"github.com/caigee-cmd/cli2api/internal/providers/devin"
@@ -114,6 +115,7 @@ func New(cfg config.Config) *App {
 	providerReg.Register(devin.NewClient(store).Adapter())
 	providerReg.Register(command.NewClient(store).Adapter())
 	providerReg.Register(codex.NewClient(store).Adapter())
+	providerReg.Register(agnes.NewClient(store).Adapter())
 	qoderClient := qoder.NewClient(store)
 	qoderClient.Bind(manager.AccountURL, manager.ProxyAPIKey)
 	providerReg.Register(qoderClient.Adapter())

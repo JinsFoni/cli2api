@@ -240,6 +240,31 @@ var Codex = ProviderDescriptor{
 	DefaultRegion: "global",
 }
 
+// Agnes descriptor. OpenAI-compatible API hub (agnes-ai.com) via a pasted
+// Bearer API key: no OAuth, no browser loopback, no check-in, no usage
+// endpoint. Generation goes through the standard /v1/chat/completions paths
+// and the upstream SSE dialect is relayed verbatim.
+var Agnes = ProviderDescriptor{
+	ID:                "agnes",
+	Label:             "Agnes AI",
+	Runtime:           RuntimeInProcess,
+	AuthTypes:         []AuthType{AuthPAT},
+	CredentialFormats: []string{"agnes-key-v1"},
+	Capabilities: ProviderCapabilities{
+		Chat: true, Stream: true, Tools: true, Images: false, Reasoning: false,
+		ModelCatalog: true, Usage: false, Login: false, BrowserLogin: false,
+		PATLogin: true, ImportExport: true,
+	},
+	Regions: []RegionDescriptor{
+		{
+			ID: "global", Label: "Global", ChatBase: "https://apihub.agnes-ai.com/v1",
+			AuthBase: "https://apihub.agnes-ai.com", BillingBase: "https://platform.agnes-ai.com",
+			DefaultDomain: "agnes-ai.com",
+		},
+	},
+	DefaultRegion: "global",
+}
+
 var registry = map[string]ProviderDescriptor{
 	Qoder.ID:     Qoder,
 	WorkBuddy.ID: WorkBuddy,
@@ -247,6 +272,7 @@ var registry = map[string]ProviderDescriptor{
 	Devin.ID:     Devin,
 	Command.ID:   Command,
 	Codex.ID:     Codex,
+	Agnes.ID:     Agnes,
 }
 
 func Get(id string) (ProviderDescriptor, bool) {
@@ -255,7 +281,7 @@ func Get(id string) (ProviderDescriptor, bool) {
 }
 
 func List() []ProviderDescriptor {
-	return []ProviderDescriptor{Qoder, WorkBuddy, Trae, Devin, Command, Codex}
+	return []ProviderDescriptor{Qoder, WorkBuddy, Trae, Devin, Command, Codex, Agnes}
 }
 
 // Resolve validates a provider/region pair. Empty values fall back to the
