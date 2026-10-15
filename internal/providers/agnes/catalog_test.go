@@ -33,14 +33,25 @@ func TestModelsParsesCatalog(t *testing.T) {
 	if len(models) != 2 {
 		t.Fatalf("expected 2 text models, got %d: %+v", len(models), models)
 	}
-	if models[0].NativeModel != "agnes-2.5-flash" || models[0].PublicModel != "agnes-2.5-flash" {
-		t.Fatalf("unexpected model: %+v", models[0])
+	flash := models[0]
+	if flash.NativeModel != "agnes-2.5-flash" || flash.PublicModel != "agnes-2.5-flash" {
+		t.Fatalf("unexpected model: %+v", flash)
 	}
-	if !models[0].Capabilities.Tools {
+	if !flash.Capabilities.Tools {
 		t.Fatal("text models should advertise tool support")
 	}
-	if models[0].Capabilities.Reasoning {
-		t.Fatal("reasoning must not be invented for undeclared models")
+	if flash.Capabilities.ContextWindow != 512*1024 {
+		t.Fatalf("context window = %d, want 512K", flash.Capabilities.ContextWindow)
+	}
+	if flash.Capabilities.MaxOutput != 65536 {
+		t.Fatalf("max output = %d, want 65536", flash.Capabilities.MaxOutput)
+	}
+	if !flash.Capabilities.Reasoning {
+		t.Fatal("agnes-2.5-flash declares Thinking mode and should advertise reasoning")
+	}
+	pro := models[1]
+	if pro.Capabilities.ContextWindow != 1024*1024 {
+		t.Fatalf("pro context window = %d, want 1M", pro.Capabilities.ContextWindow)
 	}
 }
 

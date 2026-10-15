@@ -25,6 +25,38 @@ type catalogEnvelope struct {
 
 const catalogTTL = 3 * time.Hour
 
+// modelSpecs carries the documented per-model capabilities. GET /models
+// returns bare ids only (no context/output/reasoning fields), so the numbers
+// the console displays come from the platform's model docs
+// (wiki.agnes-ai.com: context window, maximum output, Thinking mode).
+// Ids missing from this table fall back to tool-only defaults.
+var modelSpecs = map[string]providers.ModelCapabilities{
+	"agnes-2.5-flash": {
+		ContextWindow: 512 * 1024,
+		MaxOutput:     65536,
+		Tools:         true,
+		Reasoning:     true,
+	},
+	"agnes-2.5-pro": {
+		ContextWindow: 1024 * 1024,
+		MaxOutput:     65536,
+		Tools:         true,
+		Reasoning:     true,
+	},
+	"agnes-2.5-pro-beta": {
+		ContextWindow: 1024 * 1024,
+		MaxOutput:     65536,
+		Tools:         true,
+		Reasoning:     true,
+	},
+	"agnes-3.0-flash": {
+		ContextWindow: 512 * 1024,
+		MaxOutput:     65536,
+		Tools:         true,
+		Reasoning:     true,
+	},
+}
+
 // Models lists the account's models with a TTL cache, mirroring the Command
 // adapter. Native and public ids are the platform's canonical ids; reasoning
 // support is deliberately not claimed because the catalog does not declare it.
@@ -58,7 +90,8 @@ func (c *Client) Models(ctx context.Context, accountID string) ([]providers.Mode
 
 // ParseCatalogJSON maps the /models payload onto the provider ModelInfo
 // surface. Non-text ids (agnes-image-…, agnes-video-…) are skipped: this
-// gateway serves chat only.
+// gateway serves chat only. Capabilities come from the documented spec table;
+// unknown ids keep conservative tool-only defaults.
 func ParseCatalogJSON(raw []byte) ([]providers.ModelInfo, error) {
 	var env catalogEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -78,13 +111,15 @@ func ParseCatalogJSON(raw []byte) ([]providers.ModelInfo, error) {
 			continue
 		}
 		seen[id] = struct{}{}
+		caps, known := modelSpecs[id]
+		if !known {
+			caps = providers.ModelCapabilities{Tools: true}
+		}
 		models = append(models, providers.ModelInfo{
-			NativeModel: id,
-			PublicModel: id,
-			DisplayName: id,
-			Capabilities: providers.ModelCapabilities{
-				Tools: true,
-			},
+			NativeModel:  id,
+			PublicModel:  id,
+			DisplayName:  id,
+			Capabilities: caps,
 		})
 	}
 	if len(models) == 0 {
